@@ -1,0 +1,24 @@
+[package]
+name = 'sha3pow'
+version = "3.0.0"
+edition = '2018'
+authors = ['Substrate DevHub <https://github.com/substrate-developer-hub>']
+repository = 'https://github.com/substrate-developer-hub/recipes'
+description = 'Sha3-based Proof of Work algorithms for Substrate'
+license = "GPL-3.0-or-later"
+
+[dependencies]
+parity-scale-codec = '3.2.1'
+rand = { version = "0.8", features = ["small_rng"] }
+sha3 = "0.9"
+noise = "0.7.0"
+log = "0.4.17"
+
+# Substrate packages
+# consensus-geo-pow = { path = '../pow' }
+sp-api = { version = "4.0.0-dev", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.22" }
+sp-consensus-pow = { version = "0.10.0-dev", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.22" }
+sp-core = { version = "6.0.0", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.22" }
+sp-runtime = { version = "6.0.0", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.22" }
+sp-std = '4.0.0'
+sc-consensus-pow = { version = "0.10.0-dev", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.22" }

@@ -1,0 +1,441 @@
+{
+  "source": {
+    "hash": "0x4e576148446c194727f18e4c91bac4a145d0265311b8d38e11fac433a786e164",
+    "language": "ink! 3.3.1",
+    "compiler": "rustc 1.63.0-nightly"
+  },
+  "contract": {
+    "name": "health_record_contract",
+    "version": "0.1.0",
+    "authors": [
+      "[your_name] <[your_email]>"
+    ]
+  },
+  "V3": {
+    "spec": {
+      "constructors": [
+        {
+          "args": [
+            {
+              "label": "init_value",
+              "type": {
+                "displayName": [
+                  "bool"
+                ],
+                "type": 0
+              }
+            }
+          ],
+          "docs": [
+            "Constructor that initializes the `bool` value to the given `init_value`."
+          ],
+          "label": "new",
+          "payable": false,
+          "selector": "0x9bae9d5e"
+        },
+        {
+          "args": [],
+          "docs": [
+            "Constructor that initializes the `bool` value to `false`.",
+            "",
+            "Constructors can delegate to other constructors."
+          ],
+          "label": "default",
+          "payable": false,
+          "selector": "0xed4b9d1b"
+        }
+      ],
+      "docs": [],
+      "events": [],
+      "messages": [
+        {
+          "args": [],
+          "docs": [
+            " A message that can be called on instantiated contracts.",
+            " This one flips the value of the stored `bool` from `true`",
+            " to `false` and vice versa."
+          ],
+          "label": "flip",
+          "mutates": true,
+          "payable": false,
+          "returnType": null,
+          "selector": "0x633aa551"
+        },
+        {
+          "args": [],
+          "docs": [
+            " Simply returns the current value of our `bool`."
+          ],
+          "label": "get",
+          "mutates": false,
+          "payable": false,
+          "returnType": {
+            "displayName": [
+              "bool"
+            ],
+            "type": 0
+          },
+          "selector": "0x2f865bd9"
+        },
+        {
+          "args": [],
+          "docs": [],
+          "label": "get_health_records",
+          "mutates": false,
+          "payable": false,
+          "returnType": {
+            "displayName": [
+              "Vec"
+            ],
+            "type": 5
+          },
+          "selector": "0xc885fe5d"
+        },
+        {
+          "args": [
+            {
+              "label": "data",
+              "type": {
+                "displayName": [
+                  "HealthRecord"
+                ],
+                "type": 6
+              }
+            }
+          ],
+          "docs": [],
+          "label": "add_health_record",
+          "mutates": true,
+          "payable": false,
+          "returnType": null,
+          "selector": "0xabb17b92"
+        },
+        {
+          "args": [
+            {
+              "label": "data",
+              "type": {
+                "displayName": [
+                  "HealthRecord"
+                ],
+                "type": 6
+              }
+            }
+          ],
+          "docs": [],
+          "label": "update_health_record",
+          "mutates": true,
+          "payable": false,
+          "returnType": null,
+          "selector": "0xad5ff144"
+        },
+        {
+          "args": [
+            {
+              "label": "data",
+              "type": {
+                "displayName": [
+                  "Patient"
+                ],
+                "type": 12
+              }
+            }
+          ],
+          "docs": [],
+          "label": "add_patient",
+          "mutates": true,
+          "payable": false,
+          "returnType": null,
+          "selector": "0x8338e2aa"
+        },
+        {
+          "args": [],
+          "docs": [],
+          "label": "get_patients",
+          "mutates": true,
+          "payable": false,
+          "returnType": {
+            "displayName": [
+              "Vec"
+            ],
+            "type": 11
+          },
+          "selector": "0x16a6e9cb"
+        }
+      ]
+    },
+    "storage": {
+      "struct": {
+        "fields": [
+          {
+            "layout": {
+              "cell": {
+                "key": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "ty": 0
+              }
+            },
+            "name": "value"
+          },
+          {
+            "layout": {
+              "cell": {
+                "key": "0x0100000000000000000000000000000000000000000000000000000000000000",
+                "ty": 1
+              }
+            },
+            "name": "health_records"
+          },
+          {
+            "layout": {
+              "cell": {
+                "key": "0x0200000000000000000000000000000000000000000000000000000000000000",
+                "ty": 10
+              }
+            },
+            "name": "patients"
+          }
+        ]
+      }
+    },
+    "types": [
+      {
+        "id": 0,
+        "type": {
+          "def": {
+            "primitive": "bool"
+          }
+        }
+      },
+      {
+        "id": 1,
+        "type": {
+          "def": {
+            "composite": {
+              "fields": [
+                {
+                  "name": "offset_key",
+                  "type": 9,
+                  "typeName": "Key"
+                }
+              ]
+            }
+          },
+          "params": [
+            {
+              "name": "K",
+              "type": 2
+            },
+            {
+              "name": "V",
+              "type": 5
+            }
+          ],
+          "path": [
+            "ink_storage",
+            "lazy",
+            "mapping",
+            "Mapping"
+          ]
+        }
+      },
+      {
+        "id": 2,
+        "type": {
+          "def": {
+            "composite": {
+              "fields": [
+                {
+                  "type": 3,
+                  "typeName": "[u8; 32]"
+                }
+              ]
+            }
+          },
+          "path": [
+            "ink_env",
+            "types",
+            "AccountId"
+          ]
+        }
+      },
+      {
+        "id": 3,
+        "type": {
+          "def": {
+            "array": {
+              "len": 32,
+              "type": 4
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "type": {
+          "def": {
+            "primitive": "u8"
+          }
+        }
+      },
+      {
+        "id": 5,
+        "type": {
+          "def": {
+            "sequence": {
+              "type": 6
+            }
+          }
+        }
+      },
+      {
+        "id": 6,
+        "type": {
+          "def": {
+            "composite": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": 7,
+                  "typeName": "i32"
+                },
+                {
+                  "name": "patient_id",
+                  "type": 7,
+                  "typeName": "i32"
+                },
+                {
+                  "name": "description",
+                  "type": 8,
+                  "typeName": "String"
+                },
+                {
+                  "name": "date",
+                  "type": 8,
+                  "typeName": "String"
+                }
+              ]
+            }
+          },
+          "path": [
+            "health_record_contract",
+            "health_record",
+            "HealthRecord"
+          ]
+        }
+      },
+      {
+        "id": 7,
+        "type": {
+          "def": {
+            "primitive": "i32"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "type": {
+          "def": {
+            "primitive": "str"
+          }
+        }
+      },
+      {
+        "id": 9,
+        "type": {
+          "def": {
+            "composite": {
+              "fields": [
+                {
+                  "type": 3,
+                  "typeName": "[u8; 32]"
+                }
+              ]
+            }
+          },
+          "path": [
+            "ink_primitives",
+            "Key"
+          ]
+        }
+      },
+      {
+        "id": 10,
+        "type": {
+          "def": {
+            "composite": {
+              "fields": [
+                {
+                  "name": "offset_key",
+                  "type": 9,
+                  "typeName": "Key"
+                }
+              ]
+            }
+          },
+          "params": [
+            {
+              "name": "K",
+              "type": 2
+            },
+            {
+              "name": "V",
+              "type": 11
+            }
+          ],
+          "path": [
+            "ink_storage",
+            "lazy",
+            "mapping",
+            "Mapping"
+          ]
+        }
+      },
+      {
+        "id": 11,
+        "type": {
+          "def": {
+            "sequence": {
+              "type": 12
+            }
+          }
+        }
+      },
+      {
+        "id": 12,
+        "type": {
+          "def": {
+            "composite": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": 7,
+                  "typeName": "i32"
+                },
+                {
+                  "name": "names",
+                  "type": 8,
+                  "typeName": "String"
+                },
+                {
+                  "name": "birthday",
+                  "type": 8,
+                  "typeName": "String"
+                },
+                {
+                  "name": "ssn",
+                  "type": 8,
+                  "typeName": "String"
+                }
+              ]
+            }
+          },
+          "path": [
+            "health_record_contract",
+            "health_record",
+            "Patient"
+          ]
+        }
+      }
+    ]
+  }
+}

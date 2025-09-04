@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "node",
+    "pallets/template",
+    "runtime",
+    "consensus/sha3pow",
+]
+exclude = ["contract/health-record"]
+[profile.release]
+panic = "unwind"
