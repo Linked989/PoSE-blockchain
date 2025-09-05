@@ -11,26 +11,11 @@ use sp_inherents::CreateInherentDataProviders;
 use std::thread;
 use sp_core::{H256, U256};
 use sp_runtime::traits::{Block as BlockT, One};
-use sc_client_api::{HeaderBackend, BlockBackend, Finalizer};
+use sc_client_api::{HeaderBackend, BlockBackend};
 use sp_consensus_pow::Seal as RawSeal;
 use sc_consensus_pow::{Error as PowError, PowAlgorithm};
 use sp_runtime::SaturatedConversion;
-use sp_core::blake2_256;
-// IoT epoch/slot consensus scaffold
-use sha3pow::{
-    Engine as IoTEngine,
-    Committee, EpochSeed, EpochState, AvailabilityCertificate, BlockHeader,
-    Phase, header_hash, derive_epoch_seed, new_epoch,
-    SLOT_MS, SLOTS_PER_EPOCH,
-    QuorumCertificate, ProposalMsg, BatchHeader, VoteMsg, QCMsg, MempoolPolicy, PreEndorseAggregator, encode_qc_ac_digest, PreEndorsement, has_two_thirds_preendorsement,
-};
-use parity_scale_codec::{Encode, Decode};
 use std::sync::atomic::{AtomicU32, Ordering};
-use futures::StreamExt;
-
-const HOTSTUFF_PROTOCOL: &str = "/iot-hotstuff/1";
-
-enum NetInbound { Proposal(ProposalMsg), Vote(VoteMsg), QC(QCMsg), PreEndorse(PreEndorsement) }
 
 
 // Our native executor instance.
@@ -217,23 +202,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 				))),
 		};
 	}
-    
-    // Register IoT HotStuff notifications protocol on the network
-    let hotstuff_set = sc_network::config::NonDefaultSetConfig {
-        notifications_protocol: HOTSTUFF_PROTOCOL.into(),
-        max_notification_size: 1024 * 1024,
-        set_config: sc_network::config::SetConfig {
-            in_peers: 25,
-            out_peers: 25,
-            reserved_nodes: Vec::new(),
-            non_reserved_mode: sc_network::config::NonReservedPeerMode::Accept,
-        },
-        fallback_names: Vec::new(),
-    };
-    let mut config = config;
-    config.network.extra_sets.push(hotstuff_set);
-
-let avg_tx_size_bytes = std::sync::Arc::new(AtomicU32::new(250));
+    let avg_tx_size_bytes = std::sync::Arc::new(AtomicU32::new(250));
 
     let (network, system_rpc_tx, network_starter) =
         sc_service::build_network(sc_service::BuildNetworkParams {
@@ -245,38 +214,6 @@ let avg_tx_size_bytes = std::sync::Arc::new(AtomicU32::new(250));
             block_announce_validator_builder: None,
             warp_sync: None,
         })?;
-    // Notifications peers set and receiver task for HotStuff
-    let hotstuff_peers: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<sc_network::PeerId>>> = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
-    let network_for_notif = network.clone();
-    let peers_for_notif = hotstuff_peers.clone();
-    let protocol_for_notif = HOTSTUFF_PROTOCOL;
-    let (tx_net_main, rx_net_main) = std::sync::mpsc::channel::<NetInbound>();
-    task_manager.spawn_handle().spawn("hotstuff-notifs", None, async move {
-        let mut events = network_for_notif.event_stream("hotstuff".into());
-                while let Some(ev) = events.next().await {
-            match ev {
-                sc_network::Event::NotificationStreamOpened { remote, protocol, .. } => {
-                    if protocol == protocol_for_notif { peers_for_notif.lock().unwrap().insert(remote); }
-                }
-                sc_network::Event::NotificationStreamClosed { remote, protocol, .. } => {
-                    if protocol == protocol_for_notif { peers_for_notif.lock().unwrap().remove(&remote); }
-                }
-                sc_network::Event::NotificationsReceived { messages, .. } => {
-                    for (p, data) in messages {
-                        if p != protocol_for_notif || data.is_empty() { continue; }
-                        match data[0] {
-                            1 => if let Ok(m) = ProposalMsg::decode(&mut &data[1..]) { let _ = tx_net_main.send(NetInbound::Proposal(m)); },
-                            2 => if let Ok(m) = VoteMsg::decode(&mut &data[1..]) { let _ = tx_net_main.send(NetInbound::Vote(m)); },
-                            3 => if let Ok(m) = QCMsg::decode(&mut &data[1..]) { let _ = tx_net_main.send(NetInbound::QC(m)); },
-                            4 => if let Ok(m) = PreEndorsement::decode(&mut &data[1..]) { let _ = tx_net_main.send(NetInbound::PreEndorse(m)); },
-                            _ => {}
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    });
 
 
 	if config.offchain_worker.enabled {
@@ -288,10 +225,7 @@ let avg_tx_size_bytes = std::sync::Arc::new(AtomicU32::new(250));
 		);
 	}
 
-    let role = config.role.clone();
-    let _force_authoring = config.force_authoring;
-    let _backoff_authoring_blocks: Option<()> = None;
-    let prometheus_registry = config.prometheus_registry().cloned();
+    // In pure no-seal mode we don't author, so role/authoring settings are not used.
 
 	let rpc_extensions_builder = {
 		let client = client.clone();
@@ -317,319 +251,13 @@ let avg_tx_size_bytes = std::sync::Arc::new(AtomicU32::new(250));
 		telemetry: telemetry.as_mut(),
 	})?;
 
-    if role.is_authority() {
-        let proposer_factory = sc_basic_authorship::ProposerFactory::new(
-            task_manager.spawn_handle(),
-            client.clone(),
-            transaction_pool.clone(),
-            prometheus_registry.as_ref(),
-            telemetry.as_ref().map(|x| x.handle()),
-        );
-
-        let can_author_with =
-            sp_consensus::CanAuthorWithNativeVersion::new(client.executor().clone());
-
-        let (_worker, worker_task) = sc_consensus_pow::start_mining_worker(
-            Box::new(pow_block_import),
-            client.clone(),
-            select_chain,
-            AcceptAllPow,
-            proposer_factory,
-            network.clone(),
-            network.clone(),
-            None,
-            move |_, ()| async move {
-                let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
-                Ok(timestamp)
-            },
-            // time to wait for a new block before starting to mine a new one
-            Duration::from_secs(10),
-            // how long to take to actually build the block (i.e. executing extrinsics)
-            Duration::from_secs(10),
-            can_author_with,
-        );
-
-
-        task_manager
-            .spawn_essential_handle()
-            .spawn_blocking("accept-all-consensus", Some("block-authoring"), worker_task);
-
-        // Slot/Epoch driver: produce a block only when this node is leader for the slot.
-        let client_for_slot = client.clone();
-        let pool_for_slot = transaction_pool.clone();
-        let worker_for_slot = _worker.clone();
-        let hotstuff_peers_for_slot = hotstuff_peers.clone();
-        let avg_tx_size_for_policy = avg_tx_size_bytes.clone();
-        thread::spawn(move || {
-            // Capture network for notifications broadcast
-            let network = network.clone();
-            let hotstuff_peers = hotstuff_peers_for_slot;
-            // Inbound notifications channel
-            let rx_net = rx_net_main;
-            let client_local = client_for_slot.clone();
-            // Device identity (stub): use genesis hash as a stand-in for a node/device id.
-            let me: H256 = client_local
-                .block_hash(0)
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| H256::repeat_byte(1));
-
-            // Single-node committee for now (threshold = 1)
-            let committee = Committee { group_id: 0, members: vec![me], threshold: 1 };
-
-            // Seed from genesis; rotate every epoch using derived seed from last commit QC.
-            let seed = EpochSeed(
-                client_local
-                    .block_hash(0)
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| H256::repeat_byte(2)),
-            );
-            let mut epoch_index: u64 = 0;
-            let mut slot_index: u64 = 0;
-            let mut engine = IoTEngine::new(EpochState { epoch: epoch_index, seed, committee });
-            // Install a simple mempool policy (currently returns empty batches; easy to extend)
-            struct PoolMempoolPolicy<TPool> { pool: std::sync::Arc<TPool>, avg_tx_size: std::sync::Arc<AtomicU32> }
-            impl<TPool> MempoolPolicy for PoolMempoolPolicy<TPool>
-            where TPool: sc_transaction_pool_api::TransactionPool + Send + Sync + 'static
-            {
-                fn select_batches(
-                    &self,
-                    _preendorse: &PreEndorseAggregator,
-                    _committee: &sha3pow::Committee,
-                    target_bytes: u32,
-                ) -> Vec<BatchHeader> {
-                    // Use pool.status() as a portable way to estimate ready extrinsics.
-                    let status = self.pool.status();
-                    let ready = status.ready as u32;
-                    if ready == 0 { return Vec::new(); }
-                    // Approximate packing: cap by target_bytes assuming 250 bytes avg per tx.
-                    let mut avg_tx = self.avg_tx_size.load(Ordering::Relaxed);
-                    if avg_tx == 0 { avg_tx = 250; }
-                    let max_txs = (target_bytes / avg_tx).max(1);
-                    let take = ready.min(max_txs);
-                    let bytes = take.saturating_mul(avg_tx);
-                    // Build a single batch header for now. Merkle root is placeholder (hash of bytes||txs).
-                    let mut mix = Vec::new();
-                    mix.extend_from_slice(&bytes.to_le_bytes());
-                    mix.extend_from_slice(&take.to_le_bytes());
-                    let root = H256::from(blake2_256(&mix));
-                    vec![BatchHeader { id: root, merkle_root: root, size_bytes: bytes, tx_count: take }]
-                }
-            }
-            engine.mempool = Box::new(PoolMempoolPolicy { pool: pool_for_slot.clone(), avg_tx_size: avg_tx_size_for_policy });
-
-            
-            // Helper to broadcast notifications to all connected peers for our protocol
-            let mut broadcast = |tag: u8, payload: Vec<u8>| {
-                let mut buf = Vec::with_capacity(1 + payload.len());
-                buf.push(tag);
-                buf.extend_from_slice(&payload);
-                let peers = hotstuff_peers.lock().unwrap().clone();
-                for peer in peers { let _ = network.write_notification(peer, HOTSTUFF_PROTOCOL.into(), buf.clone()); }
-            };
-
-            // Metrics: local counters
-            let mut last_metrics = std::time::Instant::now();
-            let mut proposals_made: u64 = 0;
-            let mut qcs_formed: u64 = 0;
-            let mut prepare_qcs: u64 = 0;
-            let mut precommit_qcs: u64 = 0;
-            let mut commit_qcs: u64 = 0;
-            let mut commits_made: u64 = 0;
-            let mut last_committed: Option<H256> = None;
-            // Track previous headers for pipelined phases across blocks
-            let mut prev_header: Option<BlockHeader> = None;
-            let mut prev_prev_header: Option<BlockHeader> = None;
-            let mut last_commit_qc: Option<QuorumCertificate> = None;
-            let mut view_timeouts: u64 = 0;
-            let mut packed_last_bytes: u32 = 0;
-            let mut packed_last_txs: u32 = 0;
-
-
-            loop {
-                // Drain inbound gossip and handle
-                while let Ok(msg) = rx_net.try_recv() {
-                    match msg {
-                        NetInbound::Proposal(p) => {
-                            // Minimal DA enforcement on inbound proposals
-                            if !has_two_thirds_preendorsement(&p, &engine.preendorse, &engine.epoch.committee) {
-                                continue;
-                            }
-                            // Handle proposal from network
-                            if let Some(v) = engine.handle_proposal(me, &p) {
-                                // Broadcast our Prepare vote
-                                broadcast(2, v.encode());
-                                let _ = engine.handle_vote(v);
-                            }
-                        }
-                        NetInbound::Vote(v) => {
-                            if let Some(qc) = engine.handle_vote(v.clone()) { broadcast(3, qc.encode()); let _ = engine.handle_qc(qc); }
-                        }
-                        NetInbound::QC(q) => {
-                            if let Some(committed) = engine.handle_qc(q) {
-                                if let Some(last) = committed.last() {
-                                    if client_local.header(&sp_runtime::generic::BlockId::<Block>::Hash(*last)).ok().flatten().is_some() {
-                                        let info_fin = client_local.info();
-                                        if info_fin.finalized_hash != *last {
-                                            let bid = sp_runtime::generic::BlockId::<Block>::Hash(*last);
-                                            let _ = client_local.finalize_block(bid, None, true);
-                                        }
-                                    }
-                                }
-                            } }
-                        NetInbound::PreEndorse(pre) => { engine.preendorse.add(pre); }
-                    }
-                }
-                // Pacemaker: rotate view on timeout
-                if engine.view_timed_out() {
-                    engine.next_view();
-                    view_timeouts = view_timeouts.saturating_add(1);
-                }
-
-                // Leadership (use view-based leader for realism)
-                let leader = engine.leader_for_view(engine.view);
-                if leader == me {
-                    // Build header metadata for this proposal
-                    let info = client_local.chain_info();
-                    let parent_hash = info.best_hash;
-                    let number_u64: u64 = info.best_number.saturated_into();
-                    let payload_hash = H256::from(blake2_256(parent_hash.as_bytes()));
-
-                    if let Some(header) = engine.propose_header(parent_hash, number_u64 + 1, slot_index, payload_hash) {
-                        // Build proposal with batches selected by policy (currently empty)
-                        let batches: Vec<BatchHeader> = engine.select_batches();
-                        if let Some(bh) = batches.first() { packed_last_bytes = bh.size_bytes; packed_last_txs = bh.tx_count; }
-                        let proposal: ProposalMsg = engine.build_proposal(parent_hash, number_u64 + 1, slot_index, &batches);
-                        proposals_made = proposals_made.saturating_add(1);
-                        // Broadcast proposal
-                        broadcast(1, proposal.encode());
-
-                         // On building a proposal, broadcast pre-endorsements for each batch (dev DA path)
-                        for b in &batches {
-                            let pre = PreEndorsement { batch_id: b.id, voter: me, sig_share: Vec::new() };
-                            engine.preendorse.add(pre.clone());
-                            broadcast(4, pre.encode());
-                        }
-
-                        // Minimal DA enforcement: require >= 2/3 pre-endorsement coverage across batches
-                        if !has_two_thirds_preendorsement(&proposal, &engine.preendorse, &engine.epoch.committee) {
-                            continue;
-                        }
-                        // Handle proposal: produce Prepare vote if safe and available for CURRENT block
-                        if let Some(prepare_vote) = engine.handle_proposal(me, &proposal) {
-                            // Broadcast our prepare vote
-                            broadcast(2, prepare_vote.encode());
-                            if let Some(prepare_qc) = engine.handle_vote(prepare_vote) {
-                                qcs_formed = qcs_formed.saturating_add(1);
-                                prepare_qcs = prepare_qcs.saturating_add(1);
-                                broadcast(3, prepare_qc.encode());
-                                let _ = engine.handle_qc(prepare_qc);
-                            }
-                        }
-
-                        // For PREVIOUS block: attempt PreCommit phase in this slot
-                        if let Some(ph) = &prev_header {
-                            let precommit_v = engine.make_vote(me, Phase::PreCommit, ph);
-                            broadcast(2, VoteMsg(precommit_v.clone()).encode());
-                            if let Some(precommit_qc) = engine.handle_vote(VoteMsg(precommit_v)) {
-                                qcs_formed = qcs_formed.saturating_add(1);
-                                precommit_qcs = precommit_qcs.saturating_add(1);
-                                broadcast(3, precommit_qc.encode());
-                                let _ = engine.handle_qc(precommit_qc);
-                            }
-                        }
-
-                        // For GRANDPARENT block: attempt Commit phase in this slot
-                        if let Some(gph) = &prev_prev_header {
-                            let commit_v = engine.make_vote(me, Phase::Commit, gph);
-                            broadcast(2, VoteMsg(commit_v.clone()).encode());
-                            if let Some(commit_qc) = engine.handle_vote(VoteMsg(commit_v)) {
-                                qcs_formed = qcs_formed.saturating_add(1);
-                                commit_qcs = commit_qcs.saturating_add(1);
-                                broadcast(3, commit_qc.encode());
-                                if let Some(committed) = engine.handle_qc(commit_qc.clone()) {
-                                    commits_made = commits_made.saturating_add(committed.len() as u64);
-                                    if let Some(last) = committed.last() { 
-                                        last_committed = Some(*last);
-                                        // Finalize the last committed block (HotStuff 3-chain grandparent), if known and not already finalized.
-                                        if client_local.header(&sp_runtime::generic::BlockId::<Block>::Hash(*last)).ok().flatten().is_some() {
-                                            let info_fin = client_local.info();
-                                            if info_fin.finalized_hash != *last {
-                                                let bid = sp_runtime::generic::BlockId::<Block>::Hash(*last);
-                                                let _ = client_local.finalize_block(bid, None, true);
-                                            }
-                                        }
-                                    }
-                                }
-                                // Prepare digest payload for logging/embedding
-                                let ac = AvailabilityCertificate { block_id: header_hash(&proposal.header), batch_ids: batches.iter().map(|b| b.id).collect() };
-                                let QCMsg(q) = commit_qc.clone();
-                                let digest_payload = encode_qc_ac_digest(&q, &ac);
-                                log::info!("Consensus digest (QC+AC) bytes: {}", digest_payload.len());
-                                let QCMsg(qc) = commit_qc.clone();
-                                if qc.phase == Phase::Commit { last_commit_qc = Some(qc); }
-                            }
-                        }
-
-                        // Shift headers for next slot pipeline
-                        prev_prev_header = prev_header.take();
-                        prev_header = Some(proposal.header.clone());
-
-                        // Trigger a block build/import via the worker path.
-                        let worker = worker_for_slot.clone();
-                        if worker.metadata().is_some() {
-                            let _ = futures::executor::block_on(worker.submit(Vec::<u8>::new()));
-                        }
-                    }
-                }
-
-                // Extra consensus metrics every 2 seconds
-                if last_metrics.elapsed().as_secs_f64() >= 2.0 {
-                    let leader = engine.leader_for_view(engine.view);
-                    log::info!(
-                        "✅✅✅ Consensus metrics — epoch: {}, slot: {}, view: {}, leader: {:?}, proposals: {}, QCs: {} [prepare:{}, precommit:{}, commit:{}], commits: {}, last_commit: {:?}, view_timeouts: {}, packed: {}B/{}tx",
-                        engine.epoch.epoch,
-                        slot_index,
-                        engine.view,
-                        leader,
-                        proposals_made,
-                        qcs_formed,
-                        prepare_qcs, precommit_qcs, commit_qcs,
-                        commits_made,
-                        last_committed,
-                        view_timeouts,
-                        packed_last_bytes, packed_last_txs
-                    );
-                    last_metrics = std::time::Instant::now();
-                }
-
-                // Epoch rotation
-                if (slot_index + 1) % SLOTS_PER_EPOCH == 0 {
-                    epoch_index = epoch_index.saturating_add(1);
-                    let next_seed = if let Some(qc) = &last_commit_qc {
-                        derive_epoch_seed(qc, None)
-                    } else {
-                        engine.epoch.seed
-                    };
-                    engine.epoch = new_epoch(epoch_index, next_seed, engine.epoch.committee.clone());
-                    slot_index = 0;
-                } else {
-                    slot_index = slot_index.saturating_add(1);
-                }
-
-                thread::sleep(Duration::from_millis(SLOT_MS));
-            }
-        });
-    }
+    // In pure no-seal mode, do not author blocks at all (no workers, no leader election).
 
     network_starter.start_network();
 
     // Spawn a lightweight metrics logger: block height, extrinsics in new blocks, user-tx TPS and totals.
     {
         let client_for_metrics = client.clone();
-        // Also track how many peers have an open HotStuff notifications stream
-        let hotstuff_peers_for_metrics = hotstuff_peers.clone();
         let avg_tx_size_for_metrics = avg_tx_size_bytes.clone();
         thread::spawn(move || {
             let mut last_best = client_for_metrics.info().best_number;
@@ -661,49 +289,13 @@ let avg_tx_size_bytes = std::sync::Arc::new(AtomicU32::new(250));
                 let secs = last_instant.elapsed().as_secs_f64();
                 let tps = if secs > 0.0 { extrinsics_in_interval as f64 / secs } else { 0.0 };
                 let user_tps = if secs > 0.0 { user_extrinsics_in_interval as f64 / secs } else { 0.0 };
-                let hs_peers = hotstuff_peers_for_metrics.lock().map(|s| s.len()).unwrap_or(0);
-                // Attempt to parse any IQC (QC+AC) digest from the best block header for on-chain visibility (dev aid)
-                {
-                    // Validate any IQC digest found in the best header (dev on-chain validation)
-                    let bid = sp_runtime::generic::BlockId::<Block>::Hash(info.best_hash);
-                    if let Ok(Some(header)) = client_for_metrics.header(&bid) {
-                        let header_hash = header.hash();
-                        for logi in header.digest.logs() {
-                            if let sp_runtime::generic::DigestItem::Other(raw) = logi {
-                                if raw.len() >= 4 && &raw[0..4] == sha3pow::DIGEST_TAG {
-                                    let mut data = &raw[4..];
-                                    let qc = sha3pow::QuorumCertificate::decode(&mut data);
-                                    let ac = qc.as_ref().ok().and_then(|_| sha3pow::AvailabilityCertificate::decode(&mut data).ok());
-                                    match (qc, ac) {
-                                        (Ok(qc), Some(ac)) => {
-                                            let ok_ids = qc.block_id == header_hash && ac.block_id == header_hash;
-                                            log::info!(
-                                                "IQC digest detected: phase={:?}, batches={}, ids_match_header={} (best #{})",
-                                                qc.phase,
-                                                ac.batch_ids.len(),
-                                                ok_ids,
-                                                best
-                                            );
-                                        }
-                                        _ => {
-                                            log::warn!("IQC digest found but failed to decode QC/AC (best #{})", best);
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
                 log::info!(
-                    "Node metrics — height: {}, extrinsics: {}, user_extrinsics: {}, TPS: {:.2}, user_TPS: {:.2}, hotstuff_peers: {}",
+                    "Node metrics — height: {}, extrinsics: {}, user_extrinsics: {}, TPS: {:.2}, user_TPS: {:.2}",
                     best,
                     extrinsics_in_interval,
                     user_extrinsics_in_interval,
                     tps,
-                    user_tps,
-                    hs_peers
+                    user_tps
                 );
 
 
@@ -717,22 +309,7 @@ let avg_tx_size_bytes = std::sync::Arc::new(AtomicU32::new(250));
     }
 
 
-    // Dev-only minimal finalizer: opt-in via DEV_FINALIZER=1 (leader only).
-    let dev_finalizer_enabled = std::env::var("DEV_FINALIZER").ok().as_deref() == Some("1");
-    if dev_finalizer_enabled {
-        log::info!("DEV_FINALIZER=1: this node will finalize blocks (others should not)");
-        let client_for_finality = client.clone();
-        thread::spawn(move || {
-            loop {
-                let info = client_for_finality.info();
-                if info.best_hash != info.finalized_hash {
-                    let best_id = sp_runtime::generic::BlockId::<Block>::Hash(info.best_hash);
-                    let _ = client_for_finality.finalize_block(best_id, None, true);
-                }
-                thread::sleep(Duration::from_secs(5));
-            }
-        });
-    }
+    // No dev finalizer in pure no-seal mode.
 
     Ok(task_manager)
 }
