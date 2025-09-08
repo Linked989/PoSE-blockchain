@@ -256,6 +256,38 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
     network_starter.start_network();
 
+    // Spawn entropy-based leader selection once enough peers are present (>= 4)
+    {
+        use sp_runtime::traits::Header as _;
+        let network_for_leader = network.clone();
+        let client_for_leader = client.clone();
+        crate::modules::entropy_leader::spawn_entropy_leader(
+            move || {
+                // Collect connected peer IDs (include local peer)
+                let mut ids: Vec<String> = network_for_leader
+                    .peers()
+                    .into_iter()
+                    .map(|p| p.to_base58())
+                    .collect();
+                ids.push(network_for_leader.local_peer_id().to_base58());
+                ids
+            },
+            move || {
+                // Use best block hash as shared seed across nodes
+                let info = client_for_leader.info();
+                let best = info.best_number;
+                if let Ok(Some(h)) = client_for_leader.block_hash(best) {
+                    h.as_fixed_bytes().clone()
+                } else {
+                    H256::zero().as_fixed_bytes().clone()
+                }
+            },
+            4,                          // minimum group size
+            Duration::from_secs(10),    // election interval
+            "entropy-leader",
+        );
+    }
+
     // Spawn a lightweight metrics logger: block height, extrinsics in new blocks, user-tx TPS and totals.
     {
         let client_for_metrics = client.clone();
