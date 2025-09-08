@@ -263,11 +263,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         let client_for_leader = client.clone();
         crate::modules::entropy_leader::spawn_entropy_leader(
             move || {
-                // Collect connected peer IDs (include local peer)
-                let mut ids: Vec<String> = network_for_leader
-                    .peers()
-                    .into_iter()
-                    .map(|p| p.to_base58())
+                // Collect connected peer IDs from network state (include local peer)
+                let state = network_for_leader.network_state();
+                let mut ids: Vec<String> = state
+                    .connected_peers
+                    .keys()
+                    .cloned()
                     .collect();
                 ids.push(network_for_leader.local_peer_id().to_base58());
                 ids
