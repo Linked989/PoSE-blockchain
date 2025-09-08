@@ -1,6 +1,7 @@
 use parity_scale_codec::{Decode, Encode};
-use sp_core::{blake2_256, ed25519};
+use sp_core::{blake2_256, ed25519, Pair};
 use sp_runtime::{OpaqueExtrinsic, traits::Block as BlockT};
+use sp_runtime::transaction_validity::TransactionValidityError;
 use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex}};
 
 use crate::modules::entropy_leader::compute_leader;
@@ -100,13 +101,15 @@ impl<B: BlockT<Hash=sp_core::H256>> TxVerifier<B> {
         }
 
         // Defer to runtime for signature/mortality/nonce/fees/weight/call rules
-        let xt = OpaqueExtrinsic::from_bytes(tx_bytes.to_vec());
+        let xt = match OpaqueExtrinsic::from_bytes(tx_bytes) {
+            Ok(x) => x,
+            Err(_) => return Verdict::Reject(RejectCode::DecodeFail),
+        };
         let at_hash = self.client.info().best_hash;
         match self.client.runtime_api().validate_transaction(at_hash, xt) {
-            Ok(validity) => {
-                if validity.priority > 0 { Verdict::Accept } else { Verdict::Defer(DeferReason::TemporarilyUnverifiable) }
-            }
-            Err(_) => Verdict::Reject(RejectCode::CallInvalid),
+            Ok(_valid) => Verdict::Accept,
+            Err(TransactionValidityError::Invalid(_)) => Verdict::Reject(RejectCode::CallInvalid),
+            Err(TransactionValidityError::Unknown(_)) => Verdict::Defer(DeferReason::TemporarilyUnverifiable),
         }
     }
 
