@@ -181,7 +181,29 @@ fn remote_keystore(_url: &String) -> Result<Arc<LocalKeystore>, &'static str> {
 }
 
 /// Builds a new service for a full client.
-pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
+pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> {
+    // Register custom P2P notification protocols for PoSE
+    {
+        use sc_network::config::{NonDefaultSetConfig, SetConfig, NonReservedPeerMode};
+        let mut push_proto = |name: &str, max_size: u64| {
+            let set = NonDefaultSetConfig {
+                notifications_protocol: name.into(),
+                max_notification_size: max_size,
+                fallback_names: Vec::new(),
+                set_config: SetConfig {
+                    in_peers: 25,
+                    out_peers: 25,
+                    reserved_nodes: Vec::new(),
+                    non_reserved_mode: NonReservedPeerMode::Accept,
+                },
+            };
+            if !config.network.extra_sets.iter().any(|s| s.notifications_protocol == name) {
+                config.network.extra_sets.push(set);
+            }
+        };
+        push_proto("/pose/tx_attest/1", 2 * 1024);
+        push_proto("/pose/proposal/1", 8 * 1024);
+    }
     let sc_service::PartialComponents {
         client,
         backend,
@@ -262,6 +284,24 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     // In pure no-seal mode, do not author blocks at all (no workers, no leader election).
 
     network_starter.start_network();
+
+    // Spawn basic notification listeners for PoSE topics (stub handlers for now)
+    {
+        let network_for_notif = network.clone();
+        task_manager.spawn_handle().spawn("pose-notifs", None, async move {
+            use futures::StreamExt;
+            let mut events = network_for_notif.event_stream("pose-notifs");
+            while let Some(ev) = events.next().await {
+                match ev {
+                    sc_network::Event::NotificationsReceived { remote, protocol, messages } => {
+                        log::debug!(target: "pose-net", "recv from {} proto {} count={}", remote, protocol, messages.len());
+                        // TODO: decode attestation/proposal by protocol and apply/verify
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
 
     // Spawn entropy-based leader selection once enough peers are present (>= 4)
     {
@@ -380,6 +420,29 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         // Make it available to RPC
         *pose_handle.lock().unwrap() = Some(verifier.clone());
         log::info!("tx-verifier initialized (max 128KB, attest topic /pose/tx_attest/1)");
+
+        // Start a simple pool scanner to auto-validate and attestate new txs periodically (stub)
+        use futures::StreamExt;
+        let mut import_stream = transaction_pool.import_notification_stream();
+        let verifier_for_scan = verifier.clone();
+        task_manager.spawn_handle().spawn("pose-pool-scan", None, async move {
+            while let Some(_) = import_stream.next().await {
+                // Iterate over ready txs and attempt attestation
+                let mut iter = transaction_pool.ready();
+                while let Some(tx) = iter.next() {
+                    let bytes = tx.data().clone();
+                    match verifier_for_scan.validate_tx(&bytes) {
+                        crate::modules::tx::Verdict::Accept => {
+                            if let Some(att) = verifier_for_scan.attestate_if_leader(&bytes) {
+                                log::info!(target: "pose-attest", "attested tx {}", hex::encode(att.tx_hash));
+                                // TODO: gossip over /pose/tx_attest/1 via notifications
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        });
     }
 
     // Spawn a lightweight metrics logger: block height, extrinsics in new blocks, user-tx TPS and totals.
