@@ -341,6 +341,44 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
         );
     }
 
+    // Manual-seal worker (dev): build/import blocks on command
+    let manual_seal_tx = {
+        use futures::channel::mpsc;
+        use sc_consensus_manual_seal as manual;
+        let proposer_factory = sc_basic_authorship::ProposerFactory::new(
+            task_manager.spawn_handle(),
+            client.clone(),
+            transaction_pool.clone(),
+            config.prometheus_registry().as_ref().map(|r| r.clone()),
+            None,
+        );
+        let (tx, rx) = mpsc::channel(1024);
+        let commands_stream = rx.map(Ok);
+        let block_import_for_seal = block_import.clone();
+        let client_for_seal = client.clone();
+        let pool_for_seal = transaction_pool.clone();
+        let select_chain_for_seal = select_chain.clone();
+        let spawn_handle = task_manager.spawn_handle();
+        spawn_handle.spawn("manual-seal", None, async move {
+            if let Err(e) = manual::run_manual_seal(manual::ManualSealParams {
+                block_import: block_import_for_seal,
+                env: proposer_factory,
+                client: client_for_seal,
+                pool: pool_for_seal,
+                commands_stream,
+                select_chain: select_chain_for_seal,
+                consensus_data_provider: None,
+                create_inherent_data_providers: move |_, _| async move {
+                    let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
+                    Ok((timestamp,))
+                },
+            }).await {
+                log::error!(target: "manual-seal", "stopped with error: {:?}", e);
+            }
+        });
+        std::sync::Arc::new(std::sync::Mutex::new(tx))
+    };
+
     // Spawn pacemaker (per-slot timing/leader expectations)
     {
         let network_for_pace = network.clone();
@@ -375,9 +413,21 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
                 )))
             } else { None }
         };
+        // When leader: trigger sealing and a manual-seal block import
         let on_leader: Option<std::sync::Arc<dyn Fn(u64, [u8;32]) + Send + Sync>> = sealer.as_ref().map(|s| {
             let s = s.clone();
-            std::sync::Arc::new(move |slot, seed_e| { s.seal_slot(seed_e, slot); }) as _
+            let tx = manual_seal_tx.clone();
+            std::sync::Arc::new(move |slot, seed_e| {
+                s.seal_slot(seed_e, slot);
+                // Ask manual-seal to build/import a block now
+                let mut guard = tx.lock().unwrap();
+                let _ = guard.try_send(sc_consensus_manual_seal::EngineCommand::SealNewBlock {
+                    create_empty: true,
+                    finalize: false,
+                    parent_hash: None,
+                    sender: None,
+                });
+            }) as _
         });
 
         crate::modules::pacemaker::spawn_pacemaker(
