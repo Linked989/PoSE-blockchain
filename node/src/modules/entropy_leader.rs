@@ -76,6 +76,7 @@ pub fn spawn_entropy_leader<FPeers, FSeed>(
                 if let Some((leader, _)) = best_peer {
                     // Announce the selected leader and current participants
                     log::info!(target: label, "Group size: {} peers", peers.len());
+                    log::info!(target: label, "Members: {}", peers.join(", "));
                     log::info!(target: label, "Selected leader: {}", leader);
                 }
             } else {
@@ -91,4 +92,3 @@ pub fn spawn_entropy_leader<FPeers, FSeed>(
         }
     });
 }
-
