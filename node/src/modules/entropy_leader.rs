@@ -50,6 +50,7 @@ pub fn spawn_entropy_leader<FPeers, FSeed>(
     min_group: usize,
     interval: Duration,
     label: &'static str,
+    external_round_nonce: Option<[u8;32]>,
 ) where
     FPeers: Fn() -> Vec<String> + Send + Sync + 'static,
     FSeed: Fn() -> [u8; 32] + Send + Sync + 'static,
@@ -69,10 +70,25 @@ pub fn spawn_entropy_leader<FPeers, FSeed>(
                 // Derive a stable round seed from best hash and peer set
                 let seed = (get_seed)();
                 let peer_bytes = peers.join(",");
-                let round_seed = blake2_256(&[seed.as_slice(), peer_bytes.as_bytes()].concat());
+                let round_seed_base = blake2_256(&[seed.as_slice(), peer_bytes.as_bytes()].concat());
 
                 // Roster commitment for groups (sorted peer IDs)
                 let roster_commitment = blake2_256(peer_bytes.as_bytes());
+
+                // Mix in external nonce if provided, else a coarse time-slot to vary across restarts
+                let time_slot_bytes = {
+                    use std::time::{SystemTime, UNIX_EPOCH};
+                    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+                    // 5-minute slots
+                    let slot: u64 = now / 300;
+                    slot.to_le_bytes()
+                };
+                let round_seed = blake2_256(&[
+                    &round_seed_base,
+                    &roster_commitment,
+                    &time_slot_bytes,
+                    &external_round_nonce.unwrap_or([0u8;32]),
+                ].concat());
 
                 // Round index derived from seed high bytes (deterministic across nodes)
                 let round_index = u64::from_le_bytes([round_seed[0],round_seed[1],round_seed[2],round_seed[3],round_seed[4],round_seed[5],round_seed[6],round_seed[7]]);

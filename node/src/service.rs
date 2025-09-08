@@ -260,6 +260,11 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     {
         let network_for_leader = network.clone();
         let client_for_leader = client.clone();
+        // Optional external round nonce from env (shared across nodes per spawn)
+        let external_round_nonce = std::env::var("LEADER_ROUND_NONCE")
+            .ok()
+            .map(|s| sp_core::blake2_256(s.as_bytes()));
+
         crate::modules::entropy_leader::spawn_entropy_leader(
             move || {
                 // Collect connected peer IDs from network state (include local peer)
@@ -283,6 +288,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             4,                          // minimum group size
             Duration::from_secs(10),    // election interval
             "entropy-leader",
+            external_round_nonce,
         );
     }
 
