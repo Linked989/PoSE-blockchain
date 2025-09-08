@@ -211,4 +211,12 @@ impl TxVerifier {
     pub fn snapshot_store(&self) -> HashMap<[u8;32], Vec<u8>> {
         self.store.lock().unwrap().clone()
     }
+
+    pub fn has_quorum(&self, tx_hash: &[u8;32]) -> bool {
+        let th = self.eligible_threshold();
+        let bm = self.bitmaps.lock().unwrap();
+        if let Some(bits) = bm.bits.get(tx_hash) {
+            bits.iter().filter(|b| **b).count() >= th
+        } else { false }
+    }
 }
