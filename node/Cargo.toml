@@ -67,6 +67,7 @@ pallet-contracts-rpc = { version = "4.0.0-dev", git = "https://github.com/parity
 log = "0.4.17"
 futures = "0.3"
 parity-scale-codec = "3.2.1"
+hex = "0.4"
 
 [build-dependencies]
 substrate-build-script-utils = { version = "3.0.0", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.22" }

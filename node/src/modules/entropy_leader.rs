@@ -3,6 +3,39 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+fn log2(x: f64) -> f64 { x.ln() / std::f64::consts::LN_2 }
+
+// Compute collision entropy H2 = -log2( sum p_i^2 ) over byte histogram
+fn collision_entropy(bytes: &[u8]) -> f64 {
+    if bytes.is_empty() { return 0.0; }
+    let mut counts = [0u64; 256];
+    for &b in bytes { counts[b as usize] += 1; }
+    let n = bytes.len() as f64;
+    let sum_p2: f64 = counts.iter()
+        .filter(|&&c| c > 0)
+        .map(|&c| { let p = c as f64 / n; p * p })
+        .sum();
+    if sum_p2 <= 0.0 { 0.0 } else { -log2(sum_p2) }
+}
+
+// Shannon entropy with Miller–Madow correction
+fn shannon_mm_entropy(bytes: &[u8]) -> f64 {
+    if bytes.is_empty() { return 0.0; }
+    let mut counts = [0u64; 256];
+    for &b in bytes { counts[b as usize] += 1; }
+    let n = bytes.len() as f64;
+    let mut k_nonzero = 0u64;
+    let h: f64 = counts.iter()
+        .filter(|&&c| c > 0)
+        .map(|&c| { k_nonzero += 1; let p = c as f64 / n; -p * log2(p) })
+        .sum();
+    // Miller–Madow correction: (k-1)/(2N ln 2)
+    let correction = if n > 0.0 { ((k_nonzero as f64) - 1.0) / (2.0 * n * std::f64::consts::LN_2) } else { 0.0 };
+    h + correction
+}
+
+fn hex32(x: &[u8; 32]) -> String { format!("0x{}", hex::encode(x)) }
+
 /// Spawns a background thread that, once at least `min_group` peers are present,
 /// deterministically selects a leader among them using entropy derived from:
 /// - latest best block hash (seed shared by all honest nodes)
@@ -38,46 +71,74 @@ pub fn spawn_entropy_leader<FPeers, FSeed>(
                 let peer_bytes = peers.join(",");
                 let round_seed = blake2_256(&[seed.as_slice(), peer_bytes.as_bytes()].concat());
 
-                // Synthesize IoT-like device readings (5 to 10 devices) deterministically
-                let device_count = 5 + (round_seed[0] as usize % 6);
-                let mut iot_entropy: Vec<u8> = Vec::with_capacity(device_count * 16);
-                for i in 0..device_count {
-                    let h = blake2_256(&[&round_seed[..], &[i as u8]].concat());
-                    // Derive plausible readings from hash bytes
-                    let temperature_c = 10 + (h[0] % 25) as i16; // 10..35 C
-                    let humidity_pc = 20 + (h[1] % 60) as u8;    // 20..80 %
-                    let vibration = (h[2] % 100) as u8;          // 0..99 arbitrary units
-                    let device_id = ((h[3] as u16) << 8) | (h[4] as u16);
+                // Roster commitment for groups (sorted peer IDs)
+                let roster_commitment = blake2_256(peer_bytes.as_bytes());
 
-                    // Accumulate entropy buffer
-                    iot_entropy.extend_from_slice(&h);
+                // Round index derived from seed high bytes (deterministic across nodes)
+                let round_index = u64::from_le_bytes([round_seed[0],round_seed[1],round_seed[2],round_seed[3],round_seed[4],round_seed[5],round_seed[6],round_seed[7]]);
 
-                    log::debug!(
-                        target: label,
-                        "IoT sample dev={:04x} temp={}C hum={}%% vib={}",
-                        device_id, temperature_c, humidity_pc, vibration
-                    );
-                }
+                // For each group (peer id), synthesize 10 IoT devices and readings deterministically from (group_id, round_seed)
+                struct GroupScore { id: String, h2: f64, hmm: f64, digest: [u8;32], device_ids: Vec<String> }
+                let mut scores: Vec<GroupScore> = Vec::with_capacity(peers.len());
+                for gid in &peers {
+                    let mut mix_bytes: Vec<u8> = Vec::with_capacity(10 * 32);
+                    let mut device_ids = Vec::with_capacity(10);
+                    for i in 0..10u8 {
+                        // Device ID derived deterministically
+                        let did_hash = blake2_256(&[&round_seed[..], gid.as_bytes(), &[i]].concat());
+                        let dev_id = format!("dev-{}-{}", &gid[..std::cmp::min(6, gid.len())], &hex::encode(&did_hash[..4]));
+                        device_ids.push(dev_id);
 
-                // Final election seed mixes everything
-                let election_seed = blake2_256(&[&round_seed[..], &iot_entropy[..]].concat());
-
-                // Score each peer by hashing seed||peer and taking the minimum
-                let mut best_peer: Option<(String, [u8; 32])> = None;
-                for p in &peers {
-                    let h = blake2_256(&[&election_seed[..], p.as_bytes()].concat());
-                    match &best_peer {
-                        None => best_peer = Some((p.clone(), h)),
-                        Some((_, cur)) if h < *cur => best_peer = Some((p.clone(), h)),
-                        _ => {}
+                        // Generate plausible readings based on hash
+                        let temperature_c = 15 + (did_hash[0] % 20) as u8;     // 15..34 C
+                        let humidity_pc   = 30 + (did_hash[1] % 50) as u8;     // 30..79 %
+                        let weight_kg     = 5  + (did_hash[2] % 95) as u8;     // 5..99 kg
+                        let battery_pc    = 20 + (did_hash[3] % 81) as u8;     // 20..100 %
+                        let motion        = did_hash[4] % 2;                   // 0/1
+                        // Pack readings into a small record and hash to bytes for entropy calc
+                        let reading_ser = [temperature_c, humidity_pc, weight_kg, battery_pc, motion];
+                        let reading_hash = blake2_256(&[&did_hash[..], &reading_ser[..]].concat());
+                        mix_bytes.extend_from_slice(&reading_hash);
                     }
+
+                    let h2 = collision_entropy(&mix_bytes);
+                    let hmm = shannon_mm_entropy(&mix_bytes);
+                    let mix_hash = blake2_256(&mix_bytes);
+                    // D_g = H(group_id || r || C_r || roster_commitment || H(mix_g))
+                    let mut r_bytes = [0u8; 8];
+                    r_bytes.copy_from_slice(&round_index.to_le_bytes());
+                    let digest = blake2_256(&[
+                        gid.as_bytes(),
+                        &r_bytes,
+                        &round_seed,
+                        &roster_commitment,
+                        &mix_hash,
+                    ].concat());
+
+                    scores.push(GroupScore { id: gid.clone(), h2, hmm, digest, device_ids });
                 }
 
-                if let Some((leader, _)) = best_peer {
-                    // Announce the selected leader and current participants
-                    log::info!(target: label, "Group size: {} peers", peers.len());
-                    log::info!(target: label, "Members: {}", peers.join(", "));
-                    log::info!(target: label, "Selected leader: {}", leader);
+                // Rank by H2 descending, then H_MM descending, then lowest digest wins
+                scores.sort_by(|a,b| {
+                    use std::cmp::Ordering::*;
+                    match b.h2.partial_cmp(&a.h2).unwrap_or(Equal) {
+                        Equal => match b.hmm.partial_cmp(&a.hmm).unwrap_or(Equal) {
+                            Equal => a.digest.cmp(&b.digest),
+                            other => other,
+                        },
+                        other => other,
+                    }
+                });
+
+                if let Some(winner) = scores.first() {
+                    log::info!(target: label, "Round r={} roster_commitment={}", round_index, hex32(&roster_commitment));
+                    for g in &scores {
+                        log::info!(target: label,
+                            "Group {}: H2={:.4}, H_MM={:.4}, digest={}, devices={} => {:?}",
+                            &g.id,
+                            g.h2, g.hmm, hex32(&g.digest), g.device_ids.len(), g.device_ids);
+                    }
+                    log::info!(target: label, "Leader Group: {}", winner.id);
                 }
             } else {
                 log::debug!(
