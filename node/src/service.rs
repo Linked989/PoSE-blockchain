@@ -229,7 +229,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     // In pure no-seal mode we don't author, so role/authoring settings are not used.
 
     // Shared handle to inject the verifier into RPC after network init
-    let pose_verifier_handle: std::sync::Arc<std::sync::Mutex<Option<std::sync::Arc<crate::modules::tx::TxVerifier<Block>>>>> = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let pose_verifier_handle: std::sync::Arc<std::sync::Mutex<Option<std::sync::Arc<crate::modules::tx::TxVerifier>>>> = std::sync::Arc::new(std::sync::Mutex::new(None));
     let rpc_extensions_builder = {
         let client = client.clone();
         let pool = transaction_pool.clone();
@@ -346,7 +346,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         };
         let my_id = move || network.local_peer_id().to_base58();
         let ed_seed = std::env::var("POSE_ATTEST_SEED").ok();
-        let verifier = crate::modules::tx::TxVerifier::<Block>::new(
+        let verifier = crate::modules::tx::TxVerifier::new(
             client.clone(),
             1024 * 128,
             Arc::new(group_roster),

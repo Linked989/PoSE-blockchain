@@ -1,6 +1,6 @@
 use parity_scale_codec::{Decode, Encode};
 use sp_core::{blake2_256, ed25519, Pair};
-use sp_runtime::{OpaqueExtrinsic, traits::Block as BlockT};
+use sp_runtime::OpaqueExtrinsic;
 use sp_runtime::transaction_validity::TransactionValidityError;
 use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex}};
 
@@ -57,8 +57,8 @@ pub struct EligibleIndex {
 
 impl Default for EligibleIndex { fn default() -> Self { Self { order: Vec::new() } } }
 
-pub struct TxVerifier<B: BlockT> {
-    pub client: Arc<sc_service::TFullClient<B, node_template_runtime::RuntimeApi, sc_executor::NativeElseWasmExecutor<crate::service::ExecutorDispatch>>>,
+pub struct TxVerifier {
+    pub client: Arc<crate::service::FullClient>,
     pub max_tx_bytes: usize,
     pub group_roster: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     pub my_peer_id: Arc<dyn Fn() -> String + Send + Sync>,
@@ -70,9 +70,9 @@ pub struct TxVerifier<B: BlockT> {
     pub eligible: Mutex<EligibleIndex>,
 }
 
-impl<B: BlockT<Hash=sp_core::H256>> TxVerifier<B> {
+impl TxVerifier {
     pub fn new(
-        client: Arc<sc_service::TFullClient<B, node_template_runtime::RuntimeApi, sc_executor::NativeElseWasmExecutor<crate::service::ExecutorDispatch>>>,
+        client: Arc<crate::service::FullClient>,
         max_tx_bytes: usize,
         group_roster: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
         my_peer_id: Arc<dyn Fn() -> String + Send + Sync>,

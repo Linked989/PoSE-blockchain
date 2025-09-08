@@ -26,7 +26,7 @@ pub struct FullDeps<C, P> {
 	pub pool: Arc<P>,
 	/// Whether to deny unsafe calls
     pub deny_unsafe: DenyUnsafe,
-    pub pose_verifier: Arc<Mutex<Option<Arc<TxVerifier<Block>>>>>,
+    pub pose_verifier: Arc<Mutex<Option<Arc<TxVerifier>>>>,
 }
 
 /// Instantiate all full RPC extensions.
