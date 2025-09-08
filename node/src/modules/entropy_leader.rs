@@ -83,12 +83,13 @@ pub fn spawn_entropy_leader<FPeers, FSeed>(
                     let slot: u64 = now / 300;
                     slot.to_le_bytes()
                 };
-                let round_seed = blake2_256(&[
-                    &round_seed_base,
-                    &roster_commitment,
-                    &time_slot_bytes,
-                    &external_round_nonce.unwrap_or([0u8;32]),
-                ].concat());
+                let ext_nonce = external_round_nonce.unwrap_or([0u8; 32]);
+                let mut round_seed_input = Vec::with_capacity(32 + 32 + 8 + 32);
+                round_seed_input.extend_from_slice(&round_seed_base);
+                round_seed_input.extend_from_slice(&roster_commitment);
+                round_seed_input.extend_from_slice(&time_slot_bytes);
+                round_seed_input.extend_from_slice(&ext_nonce);
+                let round_seed = blake2_256(&round_seed_input);
 
                 // Round index derived from seed high bytes (deterministic across nodes)
                 let round_index = u64::from_le_bytes([round_seed[0],round_seed[1],round_seed[2],round_seed[3],round_seed[4],round_seed[5],round_seed[6],round_seed[7]]);
