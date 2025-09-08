@@ -345,6 +345,7 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
     let manual_seal_tx = {
         use futures::channel::mpsc;
         use sc_consensus_manual_seal as manual;
+        use futures::StreamExt;
         let proposer_factory = sc_basic_authorship::ProposerFactory::new(
             task_manager.spawn_handle(),
             client.clone(),
@@ -352,15 +353,16 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
             config.prometheus_registry().as_ref().map(|r| r.clone()),
             None,
         );
-        let (tx, rx) = mpsc::channel(1024);
+        let (tx, rx) = mpsc::unbounded();
         let commands_stream = rx.map(Ok);
-        let block_import_for_seal = block_import.clone();
         let client_for_seal = client.clone();
         let pool_for_seal = transaction_pool.clone();
         let select_chain_for_seal = select_chain.clone();
         let spawn_handle = task_manager.spawn_handle();
+        // Move block_import into the task (no clone)
+        let block_import_for_seal = block_import;
         spawn_handle.spawn("manual-seal", None, async move {
-            if let Err(e) = manual::run_manual_seal(manual::ManualSealParams {
+            manual::run_manual_seal(manual::ManualSealParams {
                 block_import: block_import_for_seal,
                 env: proposer_factory,
                 client: client_for_seal,
@@ -372,9 +374,7 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
                     let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
                     Ok((timestamp,))
                 },
-            }).await {
-                log::error!(target: "manual-seal", "stopped with error: {:?}", e);
-            }
+            }).await;
         });
         std::sync::Arc::new(std::sync::Mutex::new(tx))
     };
@@ -420,8 +420,8 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
             std::sync::Arc::new(move |slot, seed_e| {
                 s.seal_slot(seed_e, slot);
                 // Ask manual-seal to build/import a block now
-                let mut guard = tx.lock().unwrap();
-                let _ = guard.try_send(sc_consensus_manual_seal::EngineCommand::SealNewBlock {
+                let guard = tx.lock().unwrap();
+                let _ = guard.unbounded_send(sc_consensus_manual_seal::EngineCommand::SealNewBlock {
                     create_empty: true,
                     finalize: false,
                     parent_hash: None,
