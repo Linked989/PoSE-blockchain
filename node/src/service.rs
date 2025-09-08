@@ -258,18 +258,15 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
     // Spawn entropy-based leader selection once enough peers are present (>= 4)
     {
-        use sp_runtime::traits::Header as _;
         let network_for_leader = network.clone();
         let client_for_leader = client.clone();
         crate::modules::entropy_leader::spawn_entropy_leader(
             move || {
                 // Collect connected peer IDs from network state (include local peer)
-                let state = network_for_leader.network_state();
-                let mut ids: Vec<String> = state
-                    .connected_peers
-                    .keys()
-                    .cloned()
-                    .collect();
+                let mut ids: Vec<String> = Vec::new();
+                if let Ok(state) = futures::executor::block_on(network_for_leader.network_state()) {
+                    ids.extend(state.connected_peers.keys().cloned());
+                }
                 ids.push(network_for_leader.local_peer_id().to_base58());
                 ids
             },
