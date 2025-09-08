@@ -3,8 +3,9 @@ use sc_client_api::HeaderBackend;
 use sp_api::ProvideRuntimeApi;
 use sp_transaction_pool::runtime_api::TaggedTransactionQueue;
 use sp_core::{blake2_256, ed25519, Pair};
-use sp_runtime::OpaqueExtrinsic;
-use sp_runtime::transaction_validity::TransactionValidityError;
+use node_template_runtime::opaque::Block;
+use sp_runtime::{OpaqueExtrinsic, generic::BlockId};
+use sp_runtime::transaction_validity::{TransactionValidityError, TransactionSource};
 use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex}};
 
 use crate::modules::entropy_leader::compute_leader;
@@ -109,10 +110,14 @@ impl TxVerifier {
             Err(_) => return Verdict::Reject(RejectCode::DecodeFail),
         };
         let at_hash = self.client.info().best_hash;
-        match self.client.runtime_api().validate_transaction(at_hash, xt) {
-            Ok(_valid) => Verdict::Accept,
-            Err(TransactionValidityError::Invalid(_)) => Verdict::Reject(RejectCode::CallInvalid),
-            Err(TransactionValidityError::Unknown(_)) => Verdict::Defer(DeferReason::TemporarilyUnverifiable),
+        let at = BlockId::<Block>::Hash(at_hash);
+        match self.client.runtime_api().validate_transaction(&at, TransactionSource::External, xt, at_hash) {
+            Ok(inner) => match inner {
+                Ok(_valid) => Verdict::Accept,
+                Err(TransactionValidityError::Invalid(_)) => Verdict::Reject(RejectCode::CallInvalid),
+                Err(TransactionValidityError::Unknown(_)) => Verdict::Defer(DeferReason::TemporarilyUnverifiable),
+            },
+            Err(_api_err) => Verdict::Defer(DeferReason::TemporarilyUnverifiable),
         }
     }
 
