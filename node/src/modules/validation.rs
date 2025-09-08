@@ -1,5 +1,5 @@
 use parity_scale_codec::{Encode, Decode};
-use sp_core::{ed25519, blake2_256, H256};
+use sp_core::{ed25519, blake2_256, H256, Pair};
 use std::sync::Arc;
 
 use crate::modules::proposal::Proposal;
@@ -65,7 +65,7 @@ pub fn validate_proposal(
     let mut pk32 = [0u8;32]; pk32.copy_from_slice(&proposal.proposer_pk);
     let pubk = ed25519::Public(pk32);
     let msg = [b"POSE/PROPOSAL/1".as_ref(), &proposal.encode()].concat();
-    if ed25519::Pair::verify_weak(&ed25519::Signature(*proposal_sig), &msg, &pubk) == false {
+    if ed25519::Pair::verify(&ed25519::Signature(*proposal_sig), &msg, &pubk) == false {
         return ProposalVerdict::Reject(RejectCode::BadSignature);
     }
     // VRF check (placeholder consistent with builder)
@@ -75,7 +75,10 @@ pub fn validate_proposal(
     if proposal.seed_e != seed_e { return ProposalVerdict::Reject(RejectCode::EpochMismatch); }
 
     // 2. Parent linkage
-    if client.header(proposal.parent_hash).ok().flatten().is_none() {
+    use node_template_runtime::opaque::Block;
+    use sp_runtime::generic::BlockId;
+    let bid = BlockId::<Block>::Hash(proposal.parent_hash);
+    if client.header(&bid).ok().flatten().is_none() {
         return ProposalVerdict::Defer(DeferReason::MissingParent);
     }
 
@@ -104,4 +107,3 @@ pub fn validate_proposal(
 
     ProposalVerdict::Accept
 }
-
