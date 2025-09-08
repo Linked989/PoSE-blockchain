@@ -13,7 +13,7 @@ use sp_core::{H256, U256};
 use sp_runtime::traits::{Block as BlockT, One};
 use sc_client_api::{HeaderBackend, BlockBackend};
 use sp_consensus_pow::Seal as RawSeal;
-use sc_consensus_pow::{Error as PowError, PowAlgorithm};
+use sc_consensus_pow::{Error as ConsensusError, PowAlgorithm as SealAlgorithm};
 // Removed: SaturatedConversion not used in pure no-seal mode
 use std::sync::atomic::{AtomicU32, Ordering};
 use parity_scale_codec::Encode;
@@ -44,14 +44,14 @@ pub(crate) type FullClient =
 type FullBackend = sc_service::TFullBackend<Block>;
 type FullSelectChain = sc_consensus::LongestChain<FullBackend, Block>;
 
-/// Minimal consensus algorithm that accepts any provided seal and fixed difficulty.
+/// Minimal accept-all seal algorithm with fixed difficulty.
 #[derive(Clone)]
-pub struct AcceptAllPow;
+pub struct AcceptAllSeal;
 
-impl<B: BlockT<Hash = H256>> PowAlgorithm<B> for AcceptAllPow {
+impl<B: BlockT<Hash = H256>> SealAlgorithm<B> for AcceptAllSeal {
     type Difficulty = U256;
 
-    fn difficulty(&self, _parent: B::Hash) -> Result<Self::Difficulty, PowError<B>> {
+    fn difficulty(&self, _parent: B::Hash) -> Result<Self::Difficulty, ConsensusError<B>> {
         Ok(U256::from(1))
     }
 
@@ -62,8 +62,8 @@ impl<B: BlockT<Hash = H256>> PowAlgorithm<B> for AcceptAllPow {
         _pre_digest: Option<&[u8]>,
         _seal: &RawSeal,
         _difficulty: Self::Difficulty,
-    ) -> Result<bool, PowError<B>> {
-        // Accept any seal without verification.
+    ) -> Result<bool, ConsensusError<B>> {
+        // Accept any seal without verification
         Ok(true)
     }
 }
@@ -84,7 +84,7 @@ pub fn new_partial(
                 Arc<FullClient>,
                 FullClient,
                 FullSelectChain,
-                AcceptAllPow,
+                AcceptAllSeal,
                 impl sp_consensus::CanAuthorWith<Block>,
                 impl CreateInherentDataProviders<Block, ()>,
             >,
@@ -140,10 +140,10 @@ pub fn new_partial(
     let can_author_with =
     sp_consensus::CanAuthorWithNativeVersion::new(client.executor().clone());
 
-    let pow_block_import = sc_consensus_pow::PowBlockImport::new(
+    let block_import = sc_consensus_pow::PowBlockImport::new(
         client.clone(),
         client.clone(),
-        AcceptAllPow,
+        AcceptAllSeal,
         u32::MAX,                       // effectively disable inherent checks
         select_chain.clone(),
         move |_, ()| async move {
@@ -154,9 +154,9 @@ pub fn new_partial(
       );
       
       let import_queue = sc_consensus_pow::import_queue(
-        Box::new(pow_block_import.clone()),
+        Box::new(block_import.clone()),
         None,
-        AcceptAllPow,  // minimal accept-all algorithm
+        AcceptAllSeal,  // minimal accept-all algorithm
         &task_manager.spawn_essential_handle(),
         config.prometheus_registry(),
       )?;
@@ -169,7 +169,7 @@ pub fn new_partial(
         keystore_container,
         select_chain,
         transaction_pool,
-        other: (telemetry, pow_block_import),
+        other: (telemetry, block_import),
     })
 }
 
@@ -190,7 +190,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         mut keystore_container,
         select_chain,
         transaction_pool,
-        other: (mut telemetry, pow_block_import),
+        other: (mut telemetry, block_import),
     } = new_partial(&config)?;
 
 	if let Some(url) = &config.keystore_remote {
