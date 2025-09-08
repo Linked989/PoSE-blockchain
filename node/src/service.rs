@@ -185,7 +185,7 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
     // Register custom P2P notification protocols for PoSE
     {
         use sc_network::config::{NonDefaultSetConfig, SetConfig, NonReservedPeerMode};
-        let mut push_proto = |name: &str, max_size: u64| {
+        let mut push_proto = |name: &'static str, max_size: u64| {
             let set = NonDefaultSetConfig {
                 notifications_protocol: name.into(),
                 max_notification_size: max_size,
