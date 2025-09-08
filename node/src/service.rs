@@ -293,9 +293,11 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
             let mut events = network_for_notif.event_stream("pose-notifs");
             while let Some(ev) = events.next().await {
                 match ev {
-                    sc_network::Event::NotificationsReceived { remote, protocol, messages } => {
-                        log::debug!(target: "pose-net", "recv from {} proto {} count={}", remote, protocol, messages.len());
-                        // TODO: decode attestation/proposal by protocol and apply/verify
+                    sc_network::Event::NotificationsReceived { remote, messages } => {
+                        for (protocol, data) in messages {
+                            log::debug!(target: "pose-net", "recv from {} proto {} bytes={}", remote, protocol, data.len());
+                            // TODO: decode by protocol and apply attestation/proposal
+                        }
                     }
                     _ => {}
                 }
@@ -423,11 +425,13 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
 
         // Start a simple pool scanner to auto-validate and attestate new txs periodically (stub)
         use futures::StreamExt;
+        use sc_service::TransactionPool as _;
         let mut import_stream = transaction_pool.import_notification_stream();
         let verifier_for_scan = verifier.clone();
         task_manager.spawn_handle().spawn("pose-pool-scan", None, async move {
             while let Some(_) = import_stream.next().await {
                 // Iterate over ready txs and attempt attestation
+                use sc_service::TransactionPool as _;
                 let mut iter = transaction_pool.ready();
                 while let Some(tx) = iter.next() {
                     let bytes = tx.data().clone();
