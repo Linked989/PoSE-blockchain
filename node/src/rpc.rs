@@ -59,7 +59,10 @@ where
         let pose_verifier = pose_verifier.clone();
         module.register_method("pose_submit_tx", move |params, _| {
             let hex_str: String = params.one()?;
-            let bytes = if let Some(s) = hex_str.strip_prefix("0x") { hex::decode(s)? } else { hex::decode(&hex_str)? };
+            let bytes = match hex_str.strip_prefix("0x") {
+                Some(s) => match hex::decode(s) { Ok(b) => b, Err(e) => return Ok(serde_json::json!({"error":"bad-hex","message": e.to_string()})) },
+                None => match hex::decode(&hex_str) { Ok(b) => b, Err(e) => return Ok(serde_json::json!({"error":"bad-hex","message": e.to_string()})) },
+            };
             let guard = pose_verifier.lock().unwrap();
             if let Some(verifier) = &*guard {
                 let verdict = verifier.validate_tx(&bytes);
@@ -86,8 +89,14 @@ where
         let pose_verifier = pose_verifier.clone();
         module.register_method("pose_submit_attestation", move |params, _| {
             let hex_str: String = params.one()?;
-            let bytes = if let Some(s) = hex_str.strip_prefix("0x") { hex::decode(s)? } else { hex::decode(&hex_str)? };
-            let att = tx::TxAttestation::decode(&mut &bytes[..])?;
+            let bytes = match hex_str.strip_prefix("0x") {
+                Some(s) => match hex::decode(s) { Ok(b) => b, Err(e) => return Ok(serde_json::json!({"error":"bad-hex","message": e.to_string()})) },
+                None => match hex::decode(&hex_str) { Ok(b) => b, Err(e) => return Ok(serde_json::json!({"error":"bad-hex","message": e.to_string()})) },
+            };
+            let att = match tx::TxAttestation::decode(&mut &bytes[..]) {
+                Ok(a) => a,
+                Err(e) => return Ok(serde_json::json!({"error":"bad-attestation","message": format!("{}", e)})),
+            };
             let guard = pose_verifier.lock().unwrap();
             if let Some(verifier) = &*guard {
                 let new = verifier.apply_attestation(&att);
