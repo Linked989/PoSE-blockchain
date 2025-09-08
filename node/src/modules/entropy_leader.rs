@@ -6,7 +6,7 @@ use std::time::Duration;
 fn log2(x: f64) -> f64 { x.ln() / std::f64::consts::LN_2 }
 
 // Compute collision entropy H2 = -log2( sum p_i^2 ) over byte histogram
-fn collision_entropy(bytes: &[u8]) -> f64 {
+pub(crate) fn collision_entropy(bytes: &[u8]) -> f64 {
     if bytes.is_empty() { return 0.0; }
     let mut counts = [0u64; 256];
     for &b in bytes { counts[b as usize] += 1; }
@@ -19,7 +19,7 @@ fn collision_entropy(bytes: &[u8]) -> f64 {
 }
 
 // Shannon entropy with Miller–Madow correction
-fn shannon_mm_entropy(bytes: &[u8]) -> f64 {
+pub(crate) fn shannon_mm_entropy(bytes: &[u8]) -> f64 {
     if bytes.is_empty() { return 0.0; }
     let mut counts = [0u64; 256];
     for &b in bytes { counts[b as usize] += 1; }
@@ -35,6 +35,78 @@ fn shannon_mm_entropy(bytes: &[u8]) -> f64 {
 }
 
 fn hex32(x: &[u8; 32]) -> String { format!("0x{}", hex::encode(x)) }
+
+#[derive(Clone)]
+pub struct GroupComputation {
+    pub id: String,
+    pub h2: f64,
+    pub hmm: f64,
+    pub digest: [u8;32],
+    pub device_ids: Vec<String>,
+}
+
+pub fn compute_leader(
+    mut peers: Vec<String>,
+    seed: [u8;32],
+    external_round_nonce: Option<[u8;32]>,
+) -> Option<(GroupComputation, Vec<GroupComputation>, u64, [u8;32])> {
+    if peers.is_empty() { return None; }
+    peers.sort(); peers.dedup();
+    let peer_bytes = peers.join(",");
+    let roster_commitment = blake2_256(peer_bytes.as_bytes());
+    let round_seed_base = blake2_256(&[seed.as_slice(), peer_bytes.as_bytes()].concat());
+    let time_slot_bytes = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        (now / 300).to_le_bytes()
+    };
+    let ext_nonce = external_round_nonce.unwrap_or([0u8;32]);
+    let mut round_seed_input = Vec::with_capacity(32+32+8+32);
+    round_seed_input.extend_from_slice(&round_seed_base);
+    round_seed_input.extend_from_slice(&roster_commitment);
+    round_seed_input.extend_from_slice(&time_slot_bytes);
+    round_seed_input.extend_from_slice(&ext_nonce);
+    let round_seed = blake2_256(&round_seed_input);
+    let round_index = u64::from_le_bytes([
+        round_seed[0],round_seed[1],round_seed[2],round_seed[3],
+        round_seed[4],round_seed[5],round_seed[6],round_seed[7]
+    ]);
+
+    let mut scores: Vec<GroupComputation> = Vec::with_capacity(peers.len());
+    for gid in &peers {
+        let mut mix_bytes: Vec<u8> = Vec::with_capacity(10*32);
+        let mut device_ids = Vec::with_capacity(10);
+        for i in 0..10u8 {
+            let did_hash = blake2_256(&[&round_seed[..], gid.as_bytes(), &[i]].concat());
+            let dev_id = format!("dev-{}-{}", &gid[..std::cmp::min(6, gid.len())], &hex::encode(&did_hash[..4]));
+            device_ids.push(dev_id);
+            let temperature_c = 15 + (did_hash[0] % 20) as u8;
+            let humidity_pc   = 30 + (did_hash[1] % 50) as u8;
+            let weight_kg     = 5  + (did_hash[2] % 95) as u8;
+            let battery_pc    = 20 + (did_hash[3] % 81) as u8;
+            let motion        = did_hash[4] % 2;
+            let reading_ser = [temperature_c, humidity_pc, weight_kg, battery_pc, motion];
+            let reading_hash = blake2_256(&[&did_hash[..], &reading_ser[..]].concat());
+            mix_bytes.extend_from_slice(&reading_hash);
+        }
+        let h2 = collision_entropy(&mix_bytes);
+        let hmm = shannon_mm_entropy(&mix_bytes);
+        let mix_hash = blake2_256(&mix_bytes);
+        let digest = blake2_256(&[gid.as_bytes(), &round_seed, &roster_commitment, &mix_hash].concat());
+        scores.push(GroupComputation { id: gid.clone(), h2, hmm, digest, device_ids });
+    }
+    scores.sort_by(|a,b| {
+        use std::cmp::Ordering::*;
+        match b.h2.partial_cmp(&a.h2).unwrap_or(Equal) {
+            Equal => match b.hmm.partial_cmp(&a.hmm).unwrap_or(Equal) {
+                Equal => a.digest.cmp(&b.digest),
+                other => other,
+            },
+            other => other,
+        }
+    });
+    scores.first().cloned().map(|w| (w, scores, round_index, round_seed))
+}
 
 /// Spawns a background thread that, once at least `min_group` peers are present,
 /// deterministically selects a leader among them using entropy derived from:

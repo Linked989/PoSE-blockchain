@@ -292,6 +292,37 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         );
     }
 
+    // Spawn pacemaker (per-slot timing/leader expectations)
+    {
+        let network_for_pace = network.clone();
+        let client_for_pace = client.clone();
+        let external_round_nonce = std::env::var("LEADER_ROUND_NONCE")
+            .ok()
+            .map(|s| sp_core::blake2_256(s.as_bytes()));
+
+        crate::modules::pacemaker::spawn_pacemaker(
+            crate::modules::pacemaker::PacemakerConfig::default(),
+            move || {
+                let mut ids: Vec<String> = Vec::new();
+                if let Ok(state) = futures::executor::block_on(network_for_pace.network_state()) {
+                    ids.extend(state.connected_peers.keys().cloned());
+                }
+                ids.push(network_for_pace.local_peer_id().to_base58());
+                ids.sort(); ids.dedup();
+                ids
+            },
+            move || {
+                let info = client_for_pace.info();
+                let best = info.best_number;
+                if let Ok(Some(h)) = client_for_pace.block_hash(best) {
+                    h.as_fixed_bytes().clone()
+                } else { H256::zero().as_fixed_bytes().clone() }
+            },
+            move || network.local_peer_id().to_base58(),
+            external_round_nonce,
+        );
+    }
+
     // Spawn a lightweight metrics logger: block height, extrinsics in new blocks, user-tx TPS and totals.
     {
         let client_for_metrics = client.clone();
