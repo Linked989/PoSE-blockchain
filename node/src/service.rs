@@ -228,16 +228,23 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
     // In pure no-seal mode we don't author, so role/authoring settings are not used.
 
-	let rpc_extensions_builder = {
-		let client = client.clone();
-		let pool = transaction_pool.clone();
+    // Shared handle to inject the verifier into RPC after network init
+    let pose_verifier_handle: std::sync::Arc<std::sync::Mutex<Option<std::sync::Arc<crate::modules::tx::TxVerifier<Block>>>>> = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let rpc_extensions_builder = {
+        let client = client.clone();
+        let pool = transaction_pool.clone();
+        let pose_handle_for_rpc = pose_verifier_handle.clone();
 
-		Box::new(move |deny_unsafe, _| {
-			let deps =
-				crate::rpc::FullDeps { client: client.clone(), pool: pool.clone(), deny_unsafe };
-			crate::rpc::create_full(deps).map_err(Into::into)
-		})
-	};
+        Box::new(move |deny_unsafe, _| {
+            let deps = crate::rpc::FullDeps {
+                client: client.clone(),
+                pool: pool.clone(),
+                deny_unsafe,
+                pose_verifier: pose_handle_for_rpc.clone(),
+            };
+            crate::rpc::create_full(deps).map_err(Into::into)
+        })
+    };
 
 	let _rpc_handlers = sc_service::spawn_tasks(sc_service::SpawnTasksParams {
 		network: network.clone(),
@@ -321,6 +328,36 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             move || network.local_peer_id().to_base58(),
             external_round_nonce,
         );
+    }
+
+    // Initialize tx verifier manager (API-only for now; hook into pool/gossip next)
+    {
+        let network_for_tx = network.clone();
+        let client_for_tx = client.clone();
+        let pose_handle = pose_verifier_handle.clone();
+        let group_roster = move || {
+            let mut ids: Vec<String> = Vec::new();
+            if let Ok(state) = futures::executor::block_on(network_for_tx.network_state()) {
+                ids.extend(state.connected_peers.keys().cloned());
+            }
+            ids.push(network_for_tx.local_peer_id().to_base58());
+            ids.sort(); ids.dedup();
+            ids
+        };
+        let my_id = move || network.local_peer_id().to_base58();
+        let ed_seed = std::env::var("POSE_ATTEST_SEED").ok();
+        let verifier = crate::modules::tx::TxVerifier::<Block>::new(
+            client.clone(),
+            1024 * 128,
+            Arc::new(group_roster),
+            Arc::new(my_id),
+            std::env::var("LEADER_ROUND_NONCE").ok().map(|s| sp_core::blake2_256(s.as_bytes())),
+            ed_seed,
+        );
+        let verifier = std::sync::Arc::new(verifier);
+        // Make it available to RPC
+        *pose_handle.lock().unwrap() = Some(verifier.clone());
+        log::info!("tx-verifier initialized (max 128KB, attest topic /pose/tx_attest/1)");
     }
 
     // Spawn a lightweight metrics logger: block height, extrinsics in new blocks, user-tx TPS and totals.

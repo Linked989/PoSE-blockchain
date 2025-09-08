@@ -68,6 +68,8 @@ log = "0.4.17"
 futures = "0.3"
 parity-scale-codec = "3.2.1"
 hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [build-dependencies]
 substrate-build-script-utils = { version = "3.0.0", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.22" }

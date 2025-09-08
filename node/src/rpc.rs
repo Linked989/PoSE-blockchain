@@ -5,10 +5,12 @@
 
 #![warn(missing_docs)]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use jsonrpsee::RpcModule;
 use node_template_runtime::{opaque::Block, AccountId, Balance, Index, BlockNumber, Hash};
+use crate::modules::tx::{self, TxVerifier};
+use parity_scale_codec::{Encode, Decode};
 use sc_transaction_pool_api::TransactionPool;
 use sp_api::ProvideRuntimeApi;
 use sp_block_builder::BlockBuilder;
@@ -23,7 +25,8 @@ pub struct FullDeps<C, P> {
 	/// Transaction pool instance.
 	pub pool: Arc<P>,
 	/// Whether to deny unsafe calls
-	pub deny_unsafe: DenyUnsafe,
+    pub deny_unsafe: DenyUnsafe,
+    pub pose_verifier: Arc<Mutex<Option<Arc<TxVerifier<Block>>>>>,
 }
 
 /// Instantiate all full RPC extensions.
@@ -44,12 +47,81 @@ where
 	use substrate_frame_rpc_system::{SystemApiServer, SystemRpc};
 	use pallet_contracts_rpc::{ContractsApiServer, ContractsRpc};
 
-	let mut module = RpcModule::new(());
-	let FullDeps { client, pool, deny_unsafe } = deps;
+    let mut module = RpcModule::new(());
+    let FullDeps { client, pool, deny_unsafe, pose_verifier } = deps;
 
 	module.merge(SystemRpc::new(client.clone(), pool.clone(), deny_unsafe).into_rpc())?;
 	module.merge(TransactionPaymentRpc::new(client.clone()).into_rpc())?;
-	module.merge(ContractsRpc::new(client).into_rpc())?;
+    module.merge(ContractsRpc::new(client).into_rpc())?;
+
+    // PoSE Tx attestation RPCs
+    {
+        let pose_verifier = pose_verifier.clone();
+        module.register_method("pose_submit_tx", move |params, _| {
+            let hex_str: String = params.one()?;
+            let bytes = if let Some(s) = hex_str.strip_prefix("0x") { hex::decode(s)? } else { hex::decode(&hex_str)? };
+            let guard = pose_verifier.lock().unwrap();
+            if let Some(verifier) = &*guard {
+                let verdict = verifier.validate_tx(&bytes);
+                let att = if matches!(verdict, tx::Verdict::Accept) { verifier.attestate_if_leader(&bytes) } else { None };
+                drop(guard);
+                if let Some(att) = att {
+                    let att_hex = format!("0x{}", hex::encode(att.encode()));
+                    Ok(serde_json::json!({"verdict":"ACCEPT","attestation": att_hex}))
+                } else {
+                    let v = match verdict {
+                        tx::Verdict::Accept => "ACCEPT",
+                        tx::Verdict::Reject(_) => "REJECT",
+                        tx::Verdict::Defer(_) => "DEFER",
+                    };
+                    Ok(serde_json::json!({"verdict": v}))
+                }
+            } else {
+                Ok(serde_json::json!({"error":"verifier-not-ready"}))
+            }
+        })?;
+    }
+
+    {
+        let pose_verifier = pose_verifier.clone();
+        module.register_method("pose_submit_attestation", move |params, _| {
+            let hex_str: String = params.one()?;
+            let bytes = if let Some(s) = hex_str.strip_prefix("0x") { hex::decode(s)? } else { hex::decode(&hex_str)? };
+            let att = tx::TxAttestation::decode(&mut &bytes[..])?;
+            let guard = pose_verifier.lock().unwrap();
+            if let Some(verifier) = &*guard {
+                let new = verifier.apply_attestation(&att);
+                Ok(serde_json::json!({"applied": new}))
+            } else {
+                Ok(serde_json::json!({"error":"verifier-not-ready"}))
+            }
+        })?;
+    }
+
+    {
+        let pose_verifier = pose_verifier.clone();
+        module.register_method("pose_threshold", move |_params, _| {
+            let guard = pose_verifier.lock().unwrap();
+            if let Some(verifier) = &*guard {
+                Ok(serde_json::json!({"threshold": verifier.eligible_threshold()}))
+            } else {
+                Ok(serde_json::json!({"error":"verifier-not-ready"}))
+            }
+        })?;
+    }
+
+    {
+        let pose_verifier = pose_verifier.clone();
+        module.register_method("pose_eligible", move |_params, _| {
+            let guard = pose_verifier.lock().unwrap();
+            if let Some(verifier) = &*guard {
+                let list: Vec<String> = verifier.eligible_ordered().into_iter().map(|h| format!("0x{}", hex::encode(h))).collect();
+                Ok(serde_json::json!({"eligible": list}))
+            } else {
+                Ok(serde_json::json!({"error":"verifier-not-ready"}))
+            }
+        })?;
+    }
 	// Extend this RPC with a custom API by using the following syntax.
 	// `YourRpcStruct` should have a reference to a client, which is needed
 	// to call into the runtime.
