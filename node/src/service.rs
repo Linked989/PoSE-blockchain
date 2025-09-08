@@ -434,7 +434,8 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
                 use sc_service::TransactionPool as _;
                 let mut iter = transaction_pool.ready();
                 while let Some(tx) = iter.next() {
-                    let bytes = tx.data().clone();
+                    // In this Substrate version, `data` is a field, not a method
+                    let bytes = tx.data.clone();
                     match verifier_for_scan.validate_tx(&bytes) {
                         crate::modules::tx::Verdict::Accept => {
                             if let Some(att) = verifier_for_scan.attestate_if_leader(&bytes) {
