@@ -88,9 +88,9 @@ where
             let t_vote    = Duration::from_millis(clamp_u64(cfg.vote_base_ms.max(l_ewma), cfg.ewma_min_ms, cfg.ewma_max_ms));
             let t_settle  = Duration::from_millis(clamp_u64(cfg.settle_base_ms.max(l_ewma/2), cfg.ewma_min_ms, cfg.ewma_max_ms));
 
-            log::info!(target: "pacemaker", 
-                "slot={} epoch={} round={} leader={:?} (me={}) budgets: propose={:?} vote={:?} settle={:?}",
-                s, epoch_index, round_in_epoch, leader_id, my, t_propose, t_vote, t_settle);
+            // log::info!(target: "pacemaker", 
+            //     "slot={} epoch={} round={} leader={:?} (me={}) budgets: propose={:?} vote={:?} settle={:?}",
+            //     s, epoch_index, round_in_epoch, leader_id, my, t_propose, t_vote, t_settle);
 
             // Leader nudge: if I'm the leader and not proposed by half of propose time, print reminder
             if let Some(ref lid) = leader_id { if *lid == my { 
