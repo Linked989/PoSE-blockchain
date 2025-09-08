@@ -3,6 +3,7 @@ use sp_core::{blake2_256, ed25519, Pair, H256};
 use std::{sync::{Arc, Mutex}, collections::HashMap};
 
 use crate::service::FullClient;
+use sc_client_api::HeaderBackend;
 use crate::modules::tx::TxVerifier;
 
 #[derive(Clone, Encode, Decode, Debug)]
@@ -122,4 +123,3 @@ fn merkle_root_ordered(items: &[[u8;32]]) -> [u8;32] {
     }
     level[0]
 }
-

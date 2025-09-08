@@ -50,7 +50,7 @@ where
     FGPeers: Fn() -> Vec<String> + Send + Sync + 'static,
     FGSeed: Fn() -> [u8;32] + Send + Sync + 'static,
     FGMyId: Fn() -> String + Send + Sync + 'static,
-    FOnLeader: Fn(u64, [u8;32]) + Send + Sync + 'static,
+    FOnLeader: Fn(u64, [u8;32]) + Send + Sync + 'static + ?Sized,
 {
     let get_peers = Arc::new(get_peers);
     let get_seed = Arc::new(get_seed);
