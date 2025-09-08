@@ -70,6 +70,7 @@ pub struct TxVerifier {
     pub ed_pair: ed25519::Pair,
     // state
     pub seen: Mutex<HashSet<[u8;32]>>,
+    pub store: Mutex<HashMap<[u8;32], Vec<u8>>>,
     pub bitmaps: Mutex<AttestBitmap>,
     pub eligible: Mutex<EligibleIndex>,
 }
@@ -88,7 +89,7 @@ impl TxVerifier {
             .unwrap_or_else(|| ed25519::Pair::from_string("//Alice", None).expect("dev key"));
         Self {
             client, max_tx_bytes, group_roster, my_peer_id, external_round_nonce,
-            ed_pair, seen: Mutex::new(HashSet::new()), bitmaps: Mutex::default(), eligible: Mutex::default(),
+            ed_pair, seen: Mutex::new(HashSet::new()), store: Mutex::new(HashMap::new()), bitmaps: Mutex::default(), eligible: Mutex::default(),
         }
     }
 
@@ -113,7 +114,12 @@ impl TxVerifier {
         let at = BlockId::<Block>::Hash(at_hash);
         match self.client.runtime_api().validate_transaction(&at, TransactionSource::External, xt, at_hash) {
             Ok(inner) => match inner {
-                Ok(_valid) => Verdict::Accept,
+                Ok(_valid) => {
+                    // store bytes for proposal builder
+                    let h = blake2_256(tx_bytes);
+                    self.store.lock().unwrap().insert(h, tx_bytes.to_vec());
+                    Verdict::Accept
+                },
                 Err(TransactionValidityError::Invalid(_)) => Verdict::Reject(RejectCode::CallInvalid),
                 Err(TransactionValidityError::Unknown(_)) => Verdict::Defer(DeferReason::TemporarilyUnverifiable),
             },
@@ -200,5 +206,9 @@ impl TxVerifier {
     pub fn eligible_ordered(&self) -> Vec<[u8;32]> {
         let elig = self.eligible.lock().unwrap();
         elig.order.iter().map(|(_,h)| *h).collect()
+    }
+
+    pub fn snapshot_store(&self) -> HashMap<[u8;32], Vec<u8>> {
+        self.store.lock().unwrap().clone()
     }
 }

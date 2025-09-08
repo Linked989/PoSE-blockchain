@@ -38,17 +38,19 @@ fn clamp_u64(x: u64, lo: u64, hi: u64) -> u64 { x.max(lo).min(hi) }
 /// - `get_seed`: shared 32-byte seed (e.g., best block hash)
 /// - `my_id`: returns local peer id
 /// - `external_round_nonce`: optional extra entropy shared across nodes
-pub fn spawn_pacemaker<FGPeers, FGSeed, FGMyId>(
+pub fn spawn_pacemaker<FGPeers, FGSeed, FGMyId, FOnLeader>(
     cfg: PacemakerConfig,
     get_peers: FGPeers,
     get_seed: FGSeed,
     my_id: FGMyId,
     external_round_nonce: Option<[u8;32]>,
+    on_leader_slot: Option<Arc<FOnLeader>>,
 )
 where
     FGPeers: Fn() -> Vec<String> + Send + Sync + 'static,
     FGSeed: Fn() -> [u8;32] + Send + Sync + 'static,
     FGMyId: Fn() -> String + Send + Sync + 'static,
+    FOnLeader: Fn(u64, [u8;32]) + Send + Sync + 'static,
 {
     let get_peers = Arc::new(get_peers);
     let get_seed = Arc::new(get_seed);
@@ -78,10 +80,10 @@ where
             let seed = (get_seed)();
             let my = (my_id)();
             let leader = compute_leader(peers.clone(), seed, external_round_nonce)
-                .map(|(win, _all, round_seed_num, _round_seed)| (win.id, round_seed_num));
+                .map(|(win, _all, round_seed_num, round_seed)| (win.id, round_seed_num, round_seed));
 
-            let leader_id = leader.as_ref().map(|(id, _)| id.clone());
-            let round_index = leader.map(|(_, r)| r).unwrap_or(0);
+            let leader_id = leader.as_ref().map(|(id, _, _)| id.clone());
+            let round_index = leader.as_ref().map(|(_, r, _)| *r).unwrap_or(0);
 
             let l_ewma = clamp_u64(((2.0 * ewma_ms) as u64), cfg.ewma_min_ms, cfg.ewma_max_ms);
             let t_propose = Duration::from_millis(clamp_u64(cfg.propose_base_ms.max(l_ewma), cfg.ewma_min_ms, cfg.ewma_max_ms));
@@ -102,6 +104,11 @@ where
                 });
             }}
 
+            // If I'm the leader, trigger the proposer callback
+            if let (Some(ref lid), Some(cb)) = (&leader_id, &on_leader_slot) {
+                if *lid == my { let seed_e = leader.unwrap().2; let cb = cb.clone(); thread::spawn(move || (cb)(s, seed_e)); }
+            }
+
             // Per-slot timers -- non-blocking advance
             thread::spawn(move || {
                 let slot_start = Instant::now();
@@ -118,4 +125,3 @@ where
         }
     });
 }
-

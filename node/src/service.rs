@@ -308,6 +308,26 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             .ok()
             .map(|s| sp_core::blake2_256(s.as_bytes()));
 
+        // Build proposer and pass callback to pacemaker
+        let tx_handle = pose_verifier_handle.clone();
+        let proposer = {
+            let guard = tx_handle.lock().unwrap();
+            if let Some(v) = &*guard {
+                let ed_seed = std::env::var("POSE_ATTEST_SEED").ok();
+                Some(std::sync::Arc::new(crate::modules::proposal::Proposer::new(
+                    client.clone(),
+                    v.clone(),
+                    ed_seed,
+                    1024 * 1024, // 1 MB block cap for bytes
+                    10_000_000,  // dummy weight cap
+                )))
+            } else { None }
+        };
+        let on_leader: Option<std::sync::Arc<dyn Fn(u64, [u8;32]) + Send + Sync>> = proposer.as_ref().map(|p| {
+            let p = p.clone();
+            std::sync::Arc::new(move |slot, seed_e| { let _ = p.propose_slot(seed_e, slot); }) as _
+        });
+
         crate::modules::pacemaker::spawn_pacemaker(
             crate::modules::pacemaker::PacemakerConfig::default(),
             move || {
@@ -328,6 +348,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             },
             move || network_for_my_id.local_peer_id().to_base58(),
             external_round_nonce,
+            on_leader,
         );
     }
 
