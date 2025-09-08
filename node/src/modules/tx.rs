@@ -1,4 +1,6 @@
 use parity_scale_codec::{Decode, Encode};
+use sc_client_api::HeaderBackend;
+use sp_api::ProvideRuntimeApi;
 use sp_core::{blake2_256, ed25519, Pair};
 use sp_runtime::OpaqueExtrinsic;
 use sp_runtime::transaction_validity::TransactionValidityError;
