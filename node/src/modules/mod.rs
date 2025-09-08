@@ -3,3 +3,4 @@ pub mod pacemaker;
 pub mod tx;
 pub mod proposal;
 pub mod validation;
+pub mod seal;

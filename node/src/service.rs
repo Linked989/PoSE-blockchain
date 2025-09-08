@@ -365,9 +365,19 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
                 )))
             } else { None }
         };
-        let on_leader: Option<std::sync::Arc<dyn Fn(u64, [u8;32]) + Send + Sync>> = proposer.as_ref().map(|p| {
-            let p = p.clone();
-            std::sync::Arc::new(move |slot, seed_e| { let _ = p.propose_slot(seed_e, slot); }) as _
+        // Build sealer using verifier if available
+        let sealer = {
+            let guard = pose_verifier_handle.lock().unwrap();
+            if let Some(v) = &*guard {
+                let ed_seed = std::env::var("POSE_ATTEST_SEED").ok();
+                Some(std::sync::Arc::new(crate::modules::seal::Sealer::new(
+                    client.clone(), v.clone(), ed_seed, 1024*1024, 10_000_000,
+                )))
+            } else { None }
+        };
+        let on_leader: Option<std::sync::Arc<dyn Fn(u64, [u8;32]) + Send + Sync>> = sealer.as_ref().map(|s| {
+            let s = s.clone();
+            std::sync::Arc::new(move |slot, seed_e| { s.seal_slot(seed_e, slot); }) as _
         });
 
         crate::modules::pacemaker::spawn_pacemaker(
