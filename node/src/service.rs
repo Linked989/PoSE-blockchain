@@ -303,6 +303,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     {
         let network_for_pace = network.clone();
         let client_for_pace = client.clone();
+        let network_for_my_id = network.clone();
         let external_round_nonce = std::env::var("LEADER_ROUND_NONCE")
             .ok()
             .map(|s| sp_core::blake2_256(s.as_bytes()));
@@ -325,7 +326,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     h.as_fixed_bytes().clone()
                 } else { H256::zero().as_fixed_bytes().clone() }
             },
-            move || network.local_peer_id().to_base58(),
+            move || network_for_my_id.local_peer_id().to_base58(),
             external_round_nonce,
         );
     }
