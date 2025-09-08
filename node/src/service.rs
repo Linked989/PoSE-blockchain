@@ -14,8 +14,9 @@ use sp_runtime::traits::{Block as BlockT, One};
 use sc_client_api::{HeaderBackend, BlockBackend};
 use sp_consensus_pow::Seal as RawSeal;
 use sc_consensus_pow::{Error as PowError, PowAlgorithm};
-use sp_runtime::SaturatedConversion;
+// Removed: SaturatedConversion not used in pure no-seal mode
 use std::sync::atomic::{AtomicU32, Ordering};
+use parity_scale_codec::Encode;
 
 
 // Our native executor instance.
