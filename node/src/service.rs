@@ -12,8 +12,8 @@ use std::thread;
 use sp_core::{H256, U256};
 use sp_runtime::traits::{Block as BlockT, One};
 use sc_client_api::{HeaderBackend, BlockBackend};
-use sp_consensus_pow::Seal as RawSeal;
-use sc_consensus_pow::{Error as ConsensusError, PowAlgorithm as SealAlgorithm};
+use sp_consensus_seal::Seal as RawSeal;
+use sc_consensus_seal::{Error as ConsensusError, PowAlgorithm as SealAlgorithm, PowBlockImport as SealBlockImport};
 // Removed: SaturatedConversion not used in pure no-seal mode
 use std::sync::atomic::{AtomicU32, Ordering};
 use parity_scale_codec::Encode;
@@ -79,7 +79,7 @@ pub fn new_partial(
         sc_transaction_pool::FullPool<Block, FullClient>,
         (
             Option<Telemetry>,
-            sc_consensus_pow::PowBlockImport<
+            SealBlockImport<
                 Block,
                 Arc<FullClient>,
                 FullClient,
@@ -140,7 +140,7 @@ pub fn new_partial(
     let can_author_with =
     sp_consensus::CanAuthorWithNativeVersion::new(client.executor().clone());
 
-    let block_import = sc_consensus_pow::PowBlockImport::new(
+    let block_import = SealBlockImport::new(
         client.clone(),
         client.clone(),
         AcceptAllSeal,
@@ -153,7 +153,7 @@ pub fn new_partial(
         can_author_with
       );
       
-      let import_queue = sc_consensus_pow::import_queue(
+      let import_queue = sc_consensus_seal::import_queue(
         Box::new(block_import.clone()),
         None,
         AcceptAllSeal,  // minimal accept-all algorithm
