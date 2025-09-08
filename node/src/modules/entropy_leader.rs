@@ -219,24 +219,24 @@ pub fn spawn_entropy_leader<FPeers, FSeed>(
                     }
                 });
 
-                if let Some(winner) = scores.first() {
-                    log::info!(target: label, "Round r={} roster_commitment={}", round_index, hex32(&roster_commitment));
-                    for g in &scores {
-                        log::info!(target: label,
-                            "Group {}: H2={:.4}, H_MM={:.4}, digest={}, devices={} => {:?}",
-                            &g.id,
-                            g.h2, g.hmm, hex32(&g.digest), g.device_ids.len(), g.device_ids);
-                    }
-                    log::info!(target: label, "Leader Group: {}", winner.id);
-                }
-            } else {
-                log::debug!(
-                    target: label,
-                    "Waiting for peers: {}/{} present",
-                    peers.len(),
-                    min_group
-                );
-            }
+            //     if let Some(winner) = scores.first() {
+            //         log::info!(target: label, "Round r={} roster_commitment={}", round_index, hex32(&roster_commitment));
+            //         for g in &scores {
+            //             log::info!(target: label,
+            //                 "Group {}: H2={:.4}, H_MM={:.4}, digest={}, devices={} => {:?}",
+            //                 &g.id,
+            //                 g.h2, g.hmm, hex32(&g.digest), g.device_ids.len(), g.device_ids);
+            //         }
+            //         log::info!(target: label, "Leader Group: {}", winner.id);
+            //     }
+            // } else {
+            //     log::debug!(
+            //         target: label,
+            //         "Waiting for peers: {}/{} present",
+            //         peers.len(),
+            //         min_group
+            //     );
+            // }
 
             thread::sleep(interval);
         }
