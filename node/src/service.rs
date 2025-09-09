@@ -354,7 +354,7 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
             None,
         );
         let (tx, rx) = mpsc::unbounded();
-        let commands_stream = rx.map(Ok);
+        let commands_stream = rx;
         let client_for_seal = client.clone();
         let pool_for_seal = transaction_pool.clone();
         let select_chain_for_seal = select_chain.clone();

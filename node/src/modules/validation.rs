@@ -5,7 +5,6 @@ use std::sync::Arc;
 use crate::modules::proposal::Proposal;
 use crate::modules::tx::TxVerifier;
 use crate::service::FullClient;
-use sc_client_api::HeaderBackend;
 
 #[derive(Clone, Debug)]
 pub enum DeferReason { MissingParent, MissingData }
