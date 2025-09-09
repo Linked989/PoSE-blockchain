@@ -347,12 +347,11 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
     let manual_seal_tx = {
         use futures::channel::mpsc;
         use sc_consensus_manual_seal as manual;
-        use futures::StreamExt;
         let proposer_factory = sc_basic_authorship::ProposerFactory::new(
             task_manager.spawn_handle(),
             client.clone(),
             transaction_pool.clone(),
-            prometheus_registry.clone(),
+            prometheus_registry.as_ref().map(|r| r),
             None,
         );
         let (tx, rx) = mpsc::unbounded();
