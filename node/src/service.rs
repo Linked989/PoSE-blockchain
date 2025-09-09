@@ -182,6 +182,8 @@ fn remote_keystore(_url: &String) -> Result<Arc<LocalKeystore>, &'static str> {
 
 /// Builds a new service for a full client.
 pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> {
+    // Extract prometheus registry early as config will be moved into spawn_tasks
+    let prometheus_registry = config.prometheus_registry().cloned();
     // Register custom P2P notification protocols for PoSE
     {
         use sc_network::config::{NonDefaultSetConfig, SetConfig, NonReservedPeerMode};
@@ -350,7 +352,7 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
             task_manager.spawn_handle(),
             client.clone(),
             transaction_pool.clone(),
-            config.prometheus_registry().as_ref().map(|r| r.clone()),
+            prometheus_registry.clone(),
             None,
         );
         let (tx, rx) = mpsc::unbounded();
