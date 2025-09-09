@@ -359,24 +359,22 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
         let client_for_seal = client.clone();
         let pool_for_seal = transaction_pool.clone();
         let select_chain_for_seal = select_chain.clone();
-        let spawn_handle = task_manager.spawn_handle();
+        let essential_handle = task_manager.spawn_essential_handle();
         // Move block_import into the task (no clone)
         let block_import_for_seal = block_import;
-        spawn_handle.spawn("manual-seal", None, async move {
-            manual::run_manual_seal(manual::ManualSealParams {
-                block_import: block_import_for_seal,
-                env: proposer_factory,
-                client: client_for_seal,
-                pool: pool_for_seal,
-                commands_stream,
-                select_chain: select_chain_for_seal,
-                consensus_data_provider: None,
-                create_inherent_data_providers: move |_, _| async move {
-                    let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
-                    Ok((timestamp,))
-                },
-            }).await;
-        });
+        essential_handle.spawn_blocking("manual-seal", None, manual::run_manual_seal(manual::ManualSealParams {
+            block_import: block_import_for_seal,
+            env: proposer_factory,
+            client: client_for_seal,
+            pool: pool_for_seal,
+            commands_stream,
+            select_chain: select_chain_for_seal,
+            consensus_data_provider: None,
+            create_inherent_data_providers: move |_, _| async move {
+                let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
+                Ok((timestamp,))
+            },
+        }));
         std::sync::Arc::new(std::sync::Mutex::new(tx))
     };
 
